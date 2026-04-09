@@ -51,6 +51,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Quick sanity check before handing off to goreleaser.
+      - name: Go build + test
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:

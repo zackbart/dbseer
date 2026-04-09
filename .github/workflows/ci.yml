@@ -1,14 +1,15 @@
 name: CI
 
+# Only runs on PRs. Direct pushes to main skip CI (solo dev convention).
+# Tag pushes are handled by the Release workflow, which does its own build
+# and test before running goreleaser — no need to duplicate here.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
 jobs:
   go:
-    name: Go (build + test + lint)
+    name: Go (build + vet + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +22,6 @@ jobs:
 
       # embed.FS needs an index.html to exist at build time. Drop a placeholder
       # so `go build ./...` works in CI without running the frontend build.
-      # Real releases build the actual frontend via the release workflow.
       - name: Seed embed placeholder
         run: |
           mkdir -p internal/ui/dist
@@ -37,11 +37,6 @@ jobs:
 
       - name: Test
         run: go test ./...
-
-      # golangci-lint is intentionally deferred to a later release — the
-      # upstream action's bundled binary lags the toolchain Go version we
-      # target here. `go vet` catches the same-shape issues; re-enable once
-      # golangci-lint ships a build compatible with our go.mod directive.
 
   web:
     name: Web (typecheck + lint + build)
