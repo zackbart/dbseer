@@ -48,7 +48,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
           cache: true
 
       - name: Run goreleaser
@@ -59,6 +59,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # HOMEBREW_TAP_TOKEN is a PAT with write access to zackbart/homebrew-tap.
-          # Set this in the repo secrets before cutting the first release.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # HOMEBREW_TAP_TOKEN is a fine-grained PAT with contents:write on
+          # zackbart/homebrew-tap. Referenced from .goreleaser.yml as
+          # {{ .Env.HOMEBREW_TAP_TOKEN }} on the brews.repository.token field.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

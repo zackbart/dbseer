@@ -68,6 +68,11 @@ brews:
       owner: zackbart
       name: homebrew-tap
       branch: main
+      # Explicit token override — GITHUB_TOKEN only has access to the source
+      # repo, so the default fails with 403 when pushing to the tap. This env
+      # var is set in .github/workflows/release.yml from the HOMEBREW_TAP_TOKEN
+      # repo secret (a fine-grained PAT with contents:write on the tap repo).
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: https://github.com/zackbart/dbseer
     description: "Lightweight browser-based Postgres GUI for dev environments"
