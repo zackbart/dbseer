@@ -1,0 +1,12 @@
+{
+  "defaultEnv": "local",
+  "environments": {
+    "local": {
+      "url": "postgres://postgres:postgres@localhost:5432/localdb"
+    },
+    "staging": {
+      "url": "postgres://postgres:postgres@localhost:5432/stagingdb",
+      "readonly": true
+    }
+  }
+}

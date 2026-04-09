@@ -1,0 +1,64 @@
+name: Release
+
+# Triggered on version tags like v0.1.0, v0.2.1, etc.
+# Builds the frontend, then runs goreleaser to build the Go binary (with the
+# built frontend embedded via embed.FS) and publish the release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: web
+        run: pnpm build
+
+      - name: Verify embed source
+        run: |
+          test -f internal/ui/dist/index.html || (echo "frontend build missing"; exit 1)
+          ls -la internal/ui/dist
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_TOKEN is a PAT with write access to zackbart/homebrew-tap.
+          # Set this in the repo secrets before cutting the first release.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

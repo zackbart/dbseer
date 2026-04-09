@@ -1,0 +1,82 @@
+# goreleaser config for dbseer v0.1+
+#
+# Builds a single static Go binary with the pre-built Vite SPA embedded via
+# //go:embed at internal/ui/dist. The release workflow (see
+# .github/workflows/release.yml) runs `pnpm build` BEFORE goreleaser so the
+# embedded assets exist at build time.
+#
+# Publishes archives to GitHub Releases and auto-updates the Homebrew formula
+# in github.com/zackbart/homebrew-tap.
+
+version: 2
+
+project_name: dbseer
+
+before:
+  hooks:
+    # Sanity check: the embed source must exist before we build.
+    - sh -c 'test -f internal/ui/dist/index.html || { echo "internal/ui/dist/index.html missing — run pnpm build in web/ first"; exit 1; }'
+    - go mod tidy
+
+builds:
+  - id: dbseer
+    main: ./cmd/dbseer
+    binary: dbseer
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: dbseer
+    name_template: "dbseer_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: dbseer
+    repository:
+      owner: zackbart
+      name: homebrew-tap
+      branch: main
+    directory: Formula
+    homepage: https://github.com/zackbart/dbseer
+    description: "Lightweight browser-based Postgres GUI for dev environments"
+    license: MIT
+    install: |
+      bin.install "dbseer"
+    test: |
+      assert_match "dbseer v#{version}", shell_output("#{bin}/dbseer --version")
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "dbseer: bump to {{ .Tag }}"

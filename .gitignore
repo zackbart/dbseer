@@ -1,0 +1,12 @@
+.motif/
+node_modules/
+internal/ui/dist/
+!internal/ui/dist/index.html
+dbseer
+.air-tmp/
+/dbseer
+*.log
+.DS_Store
+.env
+.env.local
+.env.*.local
