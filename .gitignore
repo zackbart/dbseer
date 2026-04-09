@@ -4,6 +4,7 @@ internal/ui/dist/
 !internal/ui/dist/index.html
 dbseer
 .air-tmp/
+*.tsbuildinfo
 /dbseer
 *.log
 .DS_Store
