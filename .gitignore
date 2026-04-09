@@ -1,13 +1,26 @@
+# Motif workflow state
 .motif/
+
+# Node
 node_modules/
+
+# Vite build output (kept as embed source; only the placeholder is tracked)
 internal/ui/dist/
 !internal/ui/dist/index.html
-dbseer
+
+# Built binary — anchored to repo root so it doesn't match cmd/dbseer/ directory
+/dbseer
+
+# Go dev artifacts
 .air-tmp/
 *.tsbuildinfo
-/dbseer
-*.log
+
+# macOS / editors
 .DS_Store
+*.log
+
+# Local env files (but keep test fixtures under internal/discover/testdata)
 .env
 .env.local
 .env.*.local
+!internal/discover/testdata/**

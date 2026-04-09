@@ -15,17 +15,20 @@ type Options struct {
 // ValidateURL checks whether the given URLInfo is safe to connect to given the
 // provided options.
 //
-// Call order invariant (pinned per plan C2):
-//  1. If IsLocalhost is false and AllowRemote is false → reject with NewRemoteError.
-//  2. If IsProdHost matches and AllowProd is false → reject with NewProdError.
-//  3. Otherwise return nil.
+// Call order: prod check first, then remote check. This ordering matters when
+// a host is both remote AND prod (e.g., db.prod.example.com) — we surface the
+// more alarming "this looks like production" message with the --allow-prod
+// hint, rather than the less urgent "this is a remote host" hint. A user who
+// sees the prod warning and still wants to proceed will know to pass BOTH
+// --allow-prod AND --allow-remote; a user whose only offense is a non-prod
+// remote host only needs --allow-remote.
 func ValidateURL(info URLInfo, opts Options) error {
-	if !info.IsLocalhost && !opts.AllowRemote {
-		return NewRemoteError(info.Host)
-	}
-
 	if isProd, reason := IsProdHost(info.Host); isProd && !opts.AllowProd {
 		return NewProdError(info.Host, reason)
+	}
+
+	if !info.IsLocalhost && !opts.AllowRemote {
+		return NewRemoteError(info.Host)
 	}
 
 	return nil

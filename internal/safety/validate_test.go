@@ -50,18 +50,30 @@ func TestValidateURL(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "prod-pattern remote without AllowRemote -> remote_host error (remote check first)",
+			// With the corrected ordering, the prod check runs first. An RDS host
+			// with NO allows gets the prod_host error (the more alarming message)
+			// rather than the remote_host one.
+			name:     "prod-pattern remote without any allows -> prod_host error",
 			info:     makeInfo("mydb.us-east-1.rds.amazonaws.com"),
 			opts:     Options{},
 			wantErr:  true,
-			wantCode: "remote_host",
+			wantCode: "prod_host",
 		},
 		{
-			name:     "prod-pattern remote with AllowRemote but without AllowProd -> prod_host error",
+			name:     "prod-pattern remote with only AllowRemote -> still prod_host error",
 			info:     makeInfo("mydb.us-east-1.rds.amazonaws.com"),
 			opts:     Options{AllowRemote: true},
 			wantErr:  true,
 			wantCode: "prod_host",
+		},
+		{
+			// User allowed prod but forgot remote — now they hit the remote_host
+			// wall instead. This is correct: the two rails are independent.
+			name:     "prod-pattern remote with only AllowProd -> remote_host error",
+			info:     makeInfo("mydb.us-east-1.rds.amazonaws.com"),
+			opts:     Options{AllowProd: true},
+			wantErr:  true,
+			wantCode: "remote_host",
 		},
 		{
 			name:    "prod-pattern with both AllowRemote and AllowProd -> passes",
