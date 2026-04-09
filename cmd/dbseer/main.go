@@ -125,19 +125,17 @@ func run() error {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	source, err := discover.Discover(discover.Options{
-		StartDir:          cwd,
-		PreferEnvironment: envFlag,
-	})
-	if err != nil {
-		return fmt.Errorf("discovery failed: %w", err)
-	}
-
 	// If --url is set, override discovery.
+	var source discover.Source
 	if urlFlag != "" {
 		source = discover.Source{
 			Kind: discover.SourceFlag,
 			URL:  urlFlag,
+		}
+	} else {
+		source, err = resolveSource(cwd, envFlag, os.Stdin, os.Stdout)
+		if err != nil {
+			return fmt.Errorf("discovery failed: %w", err)
 		}
 	}
 

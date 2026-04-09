@@ -31,6 +31,8 @@ dbseer walks upward from the current directory looking for a Postgres connection
 4. `docker-compose.yml` / `compose.yaml` — detects a `postgres` service and builds a localhost URL from its environment + published port
 5. `.dbseer.json` — explicit per-project config for multi-environment setups
 
+When you run `dbseer` from a repo root that contains multiple nested database projects, it will scan downward too and open a small terminal picker so you can choose the right source without `cd`-ing around.
+
 To override:
 
 ```sh

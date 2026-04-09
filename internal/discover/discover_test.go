@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -174,6 +175,52 @@ func TestDiscover_None(t *testing.T) {
 	}
 	// May find something if walking upward; just confirm no crash and returns a valid source.
 	_ = src
+}
+
+func TestDiscoverNested_FindsNestedEnvFiles(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "nested-workspace")
+	sources, err := DiscoverNested(Options{StartDir: dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("got %d sources, want 2", len(sources))
+	}
+	if sources[0].Path != filepath.Join(dir, "apps", "api", ".env") {
+		t.Fatalf("got first path %q", sources[0].Path)
+	}
+	if sources[1].Path != filepath.Join(dir, "apps", "worker", ".env") {
+		t.Fatalf("got second path %q", sources[1].Path)
+	}
+}
+
+func TestDiscoverNested_IgnoresBrokenNestedEnv(t *testing.T) {
+	dir := t.TempDir()
+	goodDir := filepath.Join(dir, "apps", "good")
+	badDir := filepath.Join(dir, "apps", "bad")
+	if err := os.MkdirAll(goodDir, 0o755); err != nil {
+		t.Fatalf("mkdir good: %v", err)
+	}
+	if err := os.MkdirAll(badDir, 0o755); err != nil {
+		t.Fatalf("mkdir bad: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(goodDir, ".env"), []byte("DATABASE_URL=postgres://localhost/good\n"), 0o644); err != nil {
+		t.Fatalf("write good env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, ".env"), []byte("DATABASE_URL='unterminated\n"), 0o644); err != nil {
+		t.Fatalf("write bad env: %v", err)
+	}
+
+	sources, err := DiscoverNested(Options{StartDir: dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("got %d sources, want 1", len(sources))
+	}
+	if got := sources[0].Path; got != filepath.Join(goodDir, ".env") {
+		t.Fatalf("got %q, want %q", got, filepath.Join(goodDir, ".env"))
+	}
 }
 
 // --- Unit tests for sub-parsers ---
