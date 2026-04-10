@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "../lib/api";
+import { Badge } from "@/components/ui/badge";
 
 export default function ConnectionBanner() {
   const { data, isError } = useQuery({
@@ -9,7 +10,7 @@ export default function ConnectionBanner() {
 
   if (isError || !data) {
     return (
-      <div className="h-8 bg-red-50 border-b border-red-200 flex items-center px-4 text-xs text-red-700">
+      <div className="h-8 bg-destructive/10 border-b border-destructive/20 flex items-center px-4 text-xs text-destructive">
         Could not connect to dbseer backend.
       </div>
     );
@@ -26,25 +27,25 @@ export default function ConnectionBanner() {
   };
 
   return (
-    <div className="h-8 bg-slate-100 border-b border-slate-200 flex items-center px-4 gap-3 text-xs text-slate-600 shrink-0">
-      <span className="font-medium text-slate-800">
+    <div className="h-8 bg-muted border-b border-border flex items-center px-4 gap-3 text-xs text-muted-foreground shrink-0">
+      <span className="font-medium text-foreground">
         {data.host}:{data.port}/{data.database}
       </span>
-      <span className="text-slate-400">—</span>
+      <span className="text-muted-foreground/50">—</span>
       <span>{data.user}</span>
       <span className="ml-auto flex items-center gap-2">
-        <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-[11px]" title={data.path}>
+        <Badge variant="outline" className="text-[11px] font-normal" title={data.path}>
           {sourceLabel[data.source] ?? data.source}
-        </span>
+        </Badge>
         {data.readonly && (
-          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[11px] font-medium">
+          <Badge variant="outline" className="text-[11px] text-destructive border-destructive/30">
             readonly
-          </span>
+          </Badge>
         )}
         {data.host !== "127.0.0.1" && data.host !== "localhost" && (
-          <span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-[11px]">
+          <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-300">
             remote host
-          </span>
+          </Badge>
         )}
       </span>
     </div>

@@ -1,5 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import type { WireCell, TypeHint, EnumType } from "../lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface CellEditorProps {
   cell: WireCell;
@@ -32,29 +43,30 @@ export default function CellEditor({
   const [isNull, setIsNull] = useState(cell.v === null);
   const [strVal, setStrVal] = useState(cellDisplayValue(cell));
   const [jsonError, setJsonError] = useState(false);
-  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
+    cancelledRef.current = false;
     if (inputRef.current) {
       inputRef.current.focus();
-      if (inputRef.current instanceof HTMLInputElement || inputRef.current instanceof HTMLTextAreaElement) {
-        inputRef.current.select();
-      }
+      inputRef.current.select();
     }
   }, []);
 
   if (READONLY_TYPES.includes(cell.t)) {
     return (
-      <span
-        className="text-slate-400 text-xs italic cursor-not-allowed"
-        title="read-only in v0.1"
-      >
+      <span className="text-muted-foreground text-xs italic cursor-not-allowed" title="read-only in v0.1">
         {cellDisplayValue(cell)}
       </span>
     );
   }
 
   const commit = () => {
+    if (cancelledRef.current) {
+      onCancel();
+      return;
+    }
     if (isNull) {
       onCommit({ v: null, t: "" });
       return;
@@ -89,72 +101,88 @@ export default function CellEditor({
       commit();
     }
     if (e.key === "Escape") {
+      cancelledRef.current = true;
       onCancel();
     }
   };
 
   const nullToggle = nullable ? (
-    <button
+    <Button
+      variant="outline"
+      size="xs"
       onClick={() => setIsNull((n) => !n)}
-      className={`ml-1 text-[10px] px-1 py-0.5 rounded border ${
-        isNull ? "bg-slate-200 text-slate-600 border-slate-300" : "text-slate-400 border-slate-200 hover:bg-slate-100"
-      }`}
+      className={cn("text-[10px] h-5 px-1", isNull && "bg-muted text-foreground")}
       title="Toggle NULL"
     >
       NULL
-    </button>
+    </Button>
   ) : null;
 
   if (isNull) {
     return (
       <span className="flex items-center gap-1">
-        <span className="text-xs italic text-slate-400">NULL</span>
+        <span className="text-xs italic text-muted-foreground">NULL</span>
         {nullToggle}
-        <button onClick={commit} className="text-[10px] px-1 py-0.5 bg-blue-600 text-white rounded">OK</button>
-        <button onClick={onCancel} className="text-[10px] px-1 py-0.5 border border-slate-200 rounded">✕</button>
+        <Button size="xs" onClick={commit} className="text-[10px] h-5 px-1">OK</Button>
+        <Button variant="outline" size="xs" onClick={onCancel} className="text-[10px] h-5 px-1">&#x2715;</Button>
       </span>
     );
   }
 
-  // Bool: three-state toggle
+  // Bool: select with immediate commit via onValueChange
   if (cell.t === "bool") {
     const options = ["true", "false", ...(nullable ? ["null"] : [])];
     return (
       <span className="flex items-center gap-1">
-        <select
-          ref={inputRef as React.RefObject<HTMLSelectElement>}
+        <Select
           value={strVal}
-          onChange={(e) => setStrVal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={commit}
-          className="text-xs border border-slate-300 rounded px-1 py-0.5"
+          onValueChange={(val) => {
+            const v = val ?? "";
+            setStrVal(v);
+            cancelledRef.current = false;
+            if (v === "true") onCommit({ v: true, t: "bool" });
+            else if (v === "false") onCommit({ v: false, t: "bool" });
+            else onCommit({ v: null, t: "" });
+          }}
         >
-          {options.map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
+          <SelectTrigger size="sm" className="text-xs h-6 px-1.5 py-0.5 min-w-16">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((o) => (
+              <SelectItem key={o} value={o}>{o}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {nullToggle}
       </span>
     );
   }
 
-  // Enum: select dropdown
+  // Enum: select with immediate commit
   if (cell.t === "enum" && enumName) {
     const enumType = enums.find((e) => e.name === enumName);
+    const enumValues = enumType?.values ?? [];
     return (
       <span className="flex items-center gap-1">
-        <select
-          ref={inputRef as React.RefObject<HTMLSelectElement>}
+        <Select
           value={strVal}
-          onChange={(e) => setStrVal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={commit}
-          className="text-xs border border-slate-300 rounded px-1 py-0.5"
+          onValueChange={(val) => {
+            const v = val ?? "";
+            setStrVal(v);
+            cancelledRef.current = false;
+            onCommit({ v, t: cell.t });
+          }}
         >
-          {(enumType?.values ?? []).map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
+          <SelectTrigger size="sm" className="text-xs h-6 px-1.5 py-0.5 min-w-16">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {enumValues.map((v) => (
+              <SelectItem key={v} value={v}>{v}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {nullToggle}
       </span>
     );
@@ -164,27 +192,25 @@ export default function CellEditor({
   if (cell.t === "json" || cell.t === "jsonb") {
     return (
       <span className="flex flex-col gap-1">
-        <textarea
+        <Textarea
           ref={inputRef as React.RefObject<HTMLTextAreaElement>}
           value={strVal}
           onChange={(e) => { setStrVal(e.target.value); setJsonError(false); }}
           onKeyDown={handleKeyDown}
           onBlur={commit}
           rows={3}
-          className={`text-xs border rounded px-1 py-0.5 font-mono w-48 ${
-            jsonError ? "border-red-500" : "border-slate-300"
-          }`}
+          className={cn("text-xs font-mono w-48 min-h-0 px-1 py-0.5", jsonError && "border-destructive")}
         />
         <span className="flex items-center gap-1">
           {nullToggle}
-          <button onClick={commit} className="text-[10px] px-1 py-0.5 bg-blue-600 text-white rounded">OK</button>
-          <button onClick={onCancel} className="text-[10px] px-1 py-0.5 border border-slate-200 rounded">✕</button>
+          <Button size="xs" onClick={commit} className="text-[10px] h-5 px-1">OK</Button>
+          <Button variant="outline" size="xs" onClick={onCancel} className="text-[10px] h-5 px-1">&#x2715;</Button>
         </span>
       </span>
     );
   }
 
-  // Date/timestamp inputs
+  // Default: text/number/date inputs
   let inputType = "text";
   if (cell.t === "date") inputType = "date";
   else if (cell.t === "timestamp" || cell.t === "timestamptz") inputType = "datetime-local";
@@ -193,7 +219,7 @@ export default function CellEditor({
 
   return (
     <span className="flex items-center gap-1">
-      <input
+      <Input
         ref={inputRef as React.RefObject<HTMLInputElement>}
         type={inputType}
         value={strVal}
@@ -201,7 +227,7 @@ export default function CellEditor({
         onChange={(e) => setStrVal(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={commit}
-        className="text-xs border border-slate-300 rounded px-1 py-0.5 w-32"
+        className="text-xs h-6 px-1 py-0.5 w-32"
       />
       {nullToggle}
     </span>

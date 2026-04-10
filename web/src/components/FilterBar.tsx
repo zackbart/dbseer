@@ -70,13 +70,13 @@ function FilterPopover({ colName, colType, existing, onApply, onClear, onClose }
   return (
     <div
       ref={ref}
-      className="absolute top-full left-0 z-20 mt-1 bg-white border border-slate-200 rounded shadow-lg p-3 w-56"
+      className="absolute top-full left-0 z-20 mt-1 bg-card border border-border rounded shadow-lg p-3 w-56"
     >
-      <div className="text-[11px] font-medium text-slate-500 mb-2 uppercase tracking-wide">{colName}</div>
+      <div className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wide">{colName}</div>
       <select
         value={op}
         onChange={(e) => setOp(e.target.value as FilterOp)}
-        className="w-full text-xs border border-slate-200 rounded px-1 py-1 mb-2"
+        className="w-full text-xs border border-border rounded px-1 py-1 mb-2"
       >
         {ops.map((o) => (
           <option key={o} value={o}>{o}</option>
@@ -87,7 +87,7 @@ function FilterPopover({ colName, colType, existing, onApply, onClear, onClose }
           type={valueInputType(colType)}
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          className="w-full text-xs border border-slate-200 rounded px-1 py-1 mb-2"
+          className="w-full text-xs border border-border rounded px-1 py-1 mb-2"
           placeholder="value"
           autoFocus
         />
@@ -95,7 +95,7 @@ function FilterPopover({ colName, colType, existing, onApply, onClear, onClose }
       <div className="flex gap-1 justify-end">
         <button
           onClick={onClear}
-          className="text-[11px] px-2 py-1 text-slate-500 border border-slate-200 rounded hover:bg-slate-50"
+          className="text-[11px] px-2 py-1 text-muted-foreground border border-border rounded hover:bg-muted"
         >
           Clear
         </button>
@@ -104,7 +104,7 @@ function FilterPopover({ colName, colType, existing, onApply, onClear, onClose }
             onApply({ column: colName, op, val: needsValue ? val : undefined });
             onClose();
           }}
-          className="text-[11px] px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+          className="text-[11px] px-2 py-1 bg-primary text-primary-foreground rounded hover:bg-primary/90"
         >
           Apply
         </button>
@@ -175,9 +175,9 @@ function AddFilterDropdown({ columns, activeColumns, onSelect, onClose }: AddFil
   return (
     <div
       ref={ref}
-      className="absolute top-full left-0 z-20 mt-1 bg-white border border-slate-200 rounded shadow-lg w-48"
+      className="absolute top-full left-0 z-20 mt-1 bg-card border border-border rounded shadow-lg w-48"
     >
-      <div className="p-1.5 border-b border-slate-100">
+      <div className="p-1.5 border-b border-border">
         <input
           ref={inputRef}
           type="text"
@@ -185,12 +185,12 @@ function AddFilterDropdown({ columns, activeColumns, onSelect, onClose }: AddFil
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Search columns..."
-          className="w-full text-xs border border-slate-200 rounded px-1.5 py-1 outline-none focus:border-blue-400"
+          className="w-full text-xs border border-border rounded px-1.5 py-1 outline-none focus:border-ring"
         />
       </div>
       <div className="max-h-48 overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="text-[11px] text-slate-400 px-2 py-2 text-center">No columns match</div>
+          <div className="text-[11px] text-muted-foreground px-2 py-2 text-center">No columns match</div>
         ) : (
           filtered.map((col, idx) => (
             <button
@@ -202,8 +202,8 @@ function AddFilterDropdown({ columns, activeColumns, onSelect, onClose }: AddFil
               onMouseEnter={() => setHighlightIndex(idx)}
               className={`w-full text-left text-[11px] px-2 py-1.5 ${
                 idx === highlightIndex
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-slate-600 hover:bg-slate-50"
+                  ? "bg-primary/10 text-primary"
+                  : "text-foreground hover:bg-muted"
               }`}
             >
               {col.name}
@@ -247,7 +247,7 @@ export default function FilterBar({ columns, filters, onFiltersChange }: FilterB
   };
 
   return (
-    <div className="flex items-center gap-1 flex-wrap px-2 py-1 bg-white border-b border-slate-100">
+    <div className="flex items-center gap-1 flex-wrap px-2 py-1 bg-card border-b border-border">
       {/* Active filter chips */}
       {filters.map((f) => {
         const col = colMap.get(f.column);
@@ -255,13 +255,13 @@ export default function FilterBar({ columns, filters, onFiltersChange }: FilterB
           <div key={f.column} className="relative flex items-center">
             <button
               onClick={() => setOpenCol(openCol === f.column ? null : f.column)}
-              className="text-[11px] px-2 py-0.5 rounded-l border border-r-0 bg-blue-50 border-blue-300 text-blue-700 font-medium hover:bg-blue-100"
+              className="text-[11px] px-2 py-0.5 rounded-l border border-r-0 bg-primary/10 border-primary/30 text-primary font-medium hover:bg-primary/15"
             >
               {chipLabel(f)}
             </button>
             <button
               onClick={() => clearFilter(f.column)}
-              className="text-[11px] px-1.5 py-0.5 rounded-r border bg-blue-50 border-blue-300 text-blue-500 hover:bg-blue-100 hover:text-blue-800 leading-none"
+              className="text-[11px] px-1.5 py-0.5 rounded-r border bg-primary/10 border-primary/30 text-primary/60 hover:bg-primary/15 hover:text-primary leading-none"
               aria-label={`Remove filter on ${f.column}`}
             >
               ×
@@ -284,7 +284,7 @@ export default function FilterBar({ columns, filters, onFiltersChange }: FilterB
       <div className="relative">
         <button
           onClick={() => setShowAddDropdown((v) => !v)}
-          className="text-[11px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"
+          className="text-[11px] px-2 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted"
         >
           + Add filter
         </button>
@@ -302,7 +302,7 @@ export default function FilterBar({ columns, filters, onFiltersChange }: FilterB
       {filters.length > 0 && (
         <button
           onClick={() => onFiltersChange([])}
-          className="text-[11px] text-red-500 hover:text-red-700 ml-1"
+          className="text-[11px] text-destructive hover:text-destructive/80 ml-1"
         >
           Clear all
         </button>

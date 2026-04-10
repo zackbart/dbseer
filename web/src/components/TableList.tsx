@@ -4,13 +4,26 @@ import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "../lib/api";
 import { getJSON, setJSON } from "../lib/storage";
 import type { Table } from "../lib/types";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 
 const COLLAPSED_KEY = "dbseer:tableList:collapsed";
 
 function kindBadge(table: Table) {
-  if (table.kind === "v") return <span className="text-[10px] text-slate-400 ml-1">view</span>;
-  if (table.kind === "m") return <span className="text-[10px] text-slate-400 ml-1">mview</span>;
-  if (!table.editable) return <span className="text-[10px] text-slate-400 ml-1">&#x1F512;</span>;
+  if (table.kind === "v")
+    return (
+      <Badge variant="outline" className="text-[10px] ml-1 px-1 py-0 h-auto font-normal text-muted-foreground border-border">
+        view
+      </Badge>
+    );
+  if (table.kind === "m")
+    return (
+      <Badge variant="outline" className="text-[10px] ml-1 px-1 py-0 h-auto font-normal text-muted-foreground border-border">
+        mview
+      </Badge>
+    );
+  if (!table.editable)
+    return <span className="text-[10px] text-muted-foreground ml-1">&#x1F512;</span>;
   return null;
 }
 
@@ -25,11 +38,11 @@ export default function TableList() {
   });
 
   if (isLoading) {
-    return <div className="p-4 text-xs text-slate-400">Loading tables...</div>;
+    return <div className="p-4 text-xs text-muted-foreground">Loading tables...</div>;
   }
 
   if (isError || !data) {
-    return <div className="p-4 text-xs text-red-500">Failed to load schema.</div>;
+    return <div className="p-4 text-xs text-destructive">Failed to load schema.</div>;
   }
 
   const lowerSearch = search.toLowerCase();
@@ -40,7 +53,6 @@ export default function TableList() {
       t.schema.toLowerCase().includes(lowerSearch)
   );
 
-  // Group by schema
   const schemaGroups: Record<string, Table[]> = {};
   for (const t of filtered) {
     if (!schemaGroups[t.schema]) schemaGroups[t.schema] = [];
@@ -57,13 +69,13 @@ export default function TableList() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-2 border-b border-slate-200">
-        <input
+      <div className="p-2 border-b border-border">
+        <Input
           type="text"
           placeholder="Search tables..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-slate-400"
+          className="h-7 text-xs px-2 py-1"
         />
       </div>
       <div className="flex-1 overflow-y-auto py-2">
@@ -73,11 +85,11 @@ export default function TableList() {
             <div key={schema} className="mb-1">
               <button
                 onClick={() => toggleSchema(schema)}
-                className="w-full flex items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wider text-slate-400 font-semibold hover:text-slate-600 hover:bg-slate-100 rounded-sm"
+                className="w-full flex items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold hover:text-foreground hover:bg-muted rounded-sm"
               >
                 <span className="text-[8px]">{isCollapsed ? "\u25B6" : "\u25BC"}</span>
                 <span>{schema}</span>
-                <span className="ml-auto font-normal text-slate-300">{tables.length}</span>
+                <span className="ml-auto font-normal text-muted-foreground/50">{tables.length}</span>
               </button>
               {!isCollapsed &&
                 tables.map((t) => (
@@ -87,8 +99,8 @@ export default function TableList() {
                     className={({ isActive }) =>
                       `flex items-center px-3 py-1.5 text-xs rounded mx-1 gap-1 ${
                         isActive
-                          ? "bg-blue-600 text-white"
-                          : "text-slate-700 hover:bg-slate-100"
+                          ? "bg-primary/15 text-primary font-medium"
+                          : "text-foreground hover:bg-muted"
                       }`
                     }
                   >
@@ -100,7 +112,7 @@ export default function TableList() {
           );
         })}
         {filtered.length === 0 && (
-          <div className="px-3 py-2 text-xs text-slate-400">No tables found.</div>
+          <div className="px-3 py-2 text-xs text-muted-foreground">No tables found.</div>
         )}
       </div>
     </div>

@@ -1,4 +1,6 @@
 import type { Sort } from "../lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface SortChipsProps {
   sorts: Sort[];
@@ -11,20 +13,19 @@ export default function SortChips({ sorts, onRemove }: SortChipsProps) {
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {sorts.map((sort) => (
-        <span
-          key={sort.column}
-          className="inline-flex items-center gap-1 bg-slate-100 border border-slate-200 rounded px-2 py-0.5 text-xs text-slate-700"
-        >
+        <Badge key={sort.column} variant="secondary" className="gap-1 px-2 py-0.5 text-xs">
           <span className="font-medium">{sort.column}</span>
-          <span>{sort.desc ? "↓" : "↑"}</span>
-          <button
+          <span>{sort.desc ? "\u2193" : "\u2191"}</span>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => onRemove(sort.column)}
-            className="text-slate-400 hover:text-slate-700 ml-0.5"
+            className="h-3 w-3 p-0 text-muted-foreground hover:text-foreground hover:bg-transparent ml-0.5"
             aria-label={`Remove sort on ${sort.column}`}
           >
-            ×
-          </button>
-        </span>
+            &#xd7;
+          </Button>
+        </Badge>
       ))}
     </div>
   );

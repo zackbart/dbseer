@@ -3,10 +3,12 @@ import { Routes, Route, Navigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "./lib/api";
 import { getJSON, setJSON } from "./lib/storage";
+import { buttonVariants } from "@/components/ui/button";
 import ConnectionBanner from "./components/ConnectionBanner";
 import TableList from "./components/TableList";
 import TableView from "./routes/TableView";
 import HistoryView from "./routes/HistoryView";
+import { Toaster } from "@/components/ui/sonner";
 
 const SIDEBAR_KEY = "dbseer:sidebarWidth";
 const SIDEBAR_MIN = 200;
@@ -20,7 +22,7 @@ function DefaultRedirect() {
   });
 
   if (isLoading) {
-    return <div className="p-6 text-sm text-slate-400">Loading...</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Loading...</div>;
   }
 
   const first =
@@ -31,10 +33,10 @@ function DefaultRedirect() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full text-slate-500">
+    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
       <div className="text-4xl mb-4">&#x1F5C4;&#xFE0F;</div>
-      <div className="text-base font-medium mb-1">No tables found</div>
-      <div className="text-sm text-slate-400">
+      <div className="text-base font-medium mb-1 text-foreground">No tables found</div>
+      <div className="text-sm">
         Connect to a Postgres database to get started.
       </div>
     </div>
@@ -43,10 +45,10 @@ function DefaultRedirect() {
 
 function NotFound() {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-slate-500">
+    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
       <div className="text-4xl mb-4">404</div>
       <div className="text-sm mb-4">Page not found.</div>
-      <Link to="/" className="text-blue-600 hover:underline text-sm">
+      <Link to="/" className="text-primary hover:underline text-sm">
         Go home
       </Link>
     </div>
@@ -77,7 +79,6 @@ export default function App() {
       dragging.current = false;
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
-      // Persist final width
       setSidebarWidth((w) => {
         setJSON(SIDEBAR_KEY, w);
         return w;
@@ -90,21 +91,18 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full">
+      <Toaster />
       <ConnectionBanner />
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar */}
         <aside
-          className="border-r border-slate-200 bg-slate-50 flex-shrink-0 flex flex-col overflow-hidden"
+          className="border-r border-border bg-muted flex-shrink-0 flex flex-col overflow-hidden"
           style={{ width: sidebarWidth }}
         >
-          <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               dbseer
             </span>
-            <Link
-              to="/history"
-              className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-0.5 border border-slate-200 rounded hover:bg-slate-100"
-            >
+            <Link to="/history" className={buttonVariants({ variant: "outline", size: "xs" }) + " text-[11px]"}>
               History
             </Link>
           </div>
@@ -113,13 +111,11 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Resize handle */}
         <div
-          className="w-1 cursor-col-resize hover:bg-blue-300 active:bg-blue-400 transition-colors flex-shrink-0"
+          className="w-1 cursor-col-resize hover:bg-primary/40 active:bg-primary transition-colors flex-shrink-0"
           onMouseDown={handleMouseDown}
         />
 
-        {/* Main content */}
         <main className="flex-1 overflow-hidden flex flex-col">
           <Routes>
             <Route path="/" element={<DefaultRedirect />} />

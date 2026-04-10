@@ -1,4 +1,14 @@
 import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface ConfirmUnscopedProps {
   affectedCount: number;
@@ -14,48 +24,44 @@ export default function ConfirmUnscoped({
   onCancel,
 }: ConfirmUnscopedProps) {
   const [input, setInput] = useState("");
-  const matches = input === String(affectedCount);
+  const confirmed = input === String(affectedCount);
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-        <h2 className="text-base font-semibold text-slate-800 mb-2">Confirm bulk operation</h2>
-        <p className="text-sm text-slate-600 mb-4">
-          This update will affect{" "}
-          <strong className="text-slate-900">{affectedCount}</strong> rows.
-        </p>
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Confirm bulk operation</DialogTitle>
+          <DialogDescription>
+            This update will affect{" "}
+            <strong className="text-foreground">{affectedCount}</strong> rows.
+          </DialogDescription>
+        </DialogHeader>
         {sql && (
-          <pre className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 mb-4 overflow-x-auto text-slate-700 font-mono">
+          <pre className="text-[11px] bg-muted border border-border rounded p-2 overflow-x-auto text-muted-foreground font-mono">
             {sql}
           </pre>
         )}
-        <p className="text-xs text-slate-500 mb-2">
-          Type <strong>{affectedCount}</strong> to confirm:
+        <p className="text-xs text-muted-foreground">
+          Type <strong className="text-foreground">{affectedCount}</strong> to confirm:
         </p>
-        <input
+        <Input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm mb-4 focus:outline-none focus:border-blue-400"
           placeholder={String(affectedCount)}
           autoFocus
         />
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm border border-slate-200 rounded text-slate-600 hover:bg-slate-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => matches && onConfirm(affectedCount)}
-            disabled={!matches}
-            className="px-3 py-1.5 text-sm bg-red-600 text-white rounded disabled:opacity-40 hover:bg-red-700"
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button
+            variant="destructive"
+            disabled={!confirmed}
+            onClick={() => confirmed && onConfirm(affectedCount)}
           >
             Confirm
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

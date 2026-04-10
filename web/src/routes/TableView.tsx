@@ -4,10 +4,10 @@ import { useState, useCallback, useEffect } from "react";
 import { api, queryKeys, ApiError } from "../lib/api";
 import { decodeBrowseParams, encodeBrowseParams } from "../lib/url";
 import type { Filter, Sort, WireCell } from "../lib/types";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import DataGrid from "../components/DataGrid";
 import ConfirmUnscoped from "../components/ConfirmUnscoped";
-import ToastList from "../components/Toast";
-import { useToasts } from "../lib/useToasts";
 
 interface UnscopedState {
   count: number;
@@ -19,6 +19,16 @@ function cellKey(rowIndex: number, column: string) {
   return `${rowIndex}:${column}`;
 }
 
+function cellValuesEqual(a: WireCell | undefined, b: WireCell): boolean {
+  if (!a) return false;
+  if (a.v === b.v) return true;
+  if (a.v === null || b.v === null) return false;
+  if (typeof a.v === "object" && typeof b.v === "object") {
+    return JSON.stringify(a.v) === JSON.stringify(b.v);
+  }
+  return false;
+}
+
 export default function TableView() {
   const { schemaTable } = useParams<{ schemaTable: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,17 +36,13 @@ export default function TableView() {
 
   const [unscopedState, setUnscopedState] = useState<UnscopedState | null>(null);
 
-  // Cell-level mutation tracking (lifted from DataGrid to survive mutation lifecycle).
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
   const [cellErrors, setCellErrors] = useState<Map<string, string>>(new Map());
-  const { toasts, addToast, dismiss: dismissToast } = useToasts();
 
-  // Parse schema/table from combined param
   const dotIdx = (schemaTable ?? "").indexOf(".");
   const schema = dotIdx !== -1 ? (schemaTable ?? "").slice(0, dotIdx) : "public";
   const tableName = dotIdx !== -1 ? (schemaTable ?? "").slice(dotIdx + 1) : (schemaTable ?? "");
 
-  // Decode URL state
   const { limit, offset, filters, sorts } = decodeBrowseParams(searchParams.toString());
 
   const setUrlState = useCallback(
@@ -57,7 +63,6 @@ export default function TableView() {
     [filters, sorts, limit, offset, setSearchParams]
   );
 
-  // Discover query (for column-sizing localStorage key scoping)
   const discoverQuery = useQuery({
     queryKey: queryKeys.discover,
     queryFn: () => api.discover(),
@@ -66,7 +71,6 @@ export default function TableView() {
     ? `dbseer:colWidths:${discoverQuery.data.host}:${discoverQuery.data.port}:${discoverQuery.data.database}:${schema}.${tableName}`
     : undefined;
 
-  // Schema query
   const schemaQuery = useQuery({
     queryKey: queryKeys.schema,
     queryFn: () => api.schema(),
@@ -76,7 +80,6 @@ export default function TableView() {
     (t) => t.schema === schema && t.name === tableName
   );
 
-  // Browse query
   const browseOpts = { limit, offset, filters, sorts };
   const browseQuery = useQuery({
     queryKey: queryKeys.browse(schema, tableName, browseOpts),
@@ -84,9 +87,6 @@ export default function TableView() {
     enabled: !!tableName,
   });
 
-  // Clear stale per-row state whenever browse data changes (pagination, sort,
-  // filter, or refetch). Without this, error indicators can mark the wrong row
-  // after a data change since they're keyed by positional row index.
   useEffect(() => {
     setCellErrors(new Map());
     setSavingCells(new Set());
@@ -96,7 +96,6 @@ export default function TableView() {
     void queryClient.invalidateQueries({ queryKey: ["browse", schema, tableName] });
   }, [queryClient, schema, tableName]);
 
-  // Build where clause from PK for a given row
   const buildPkWhere = useCallback(
     (rowIndex: number): Record<string, WireCell> | null => {
       if (!tableSchema || !browseQuery.data) return null;
@@ -115,11 +114,14 @@ export default function TableView() {
     [tableSchema, browseQuery.data]
   );
 
-  // Direct cell-edit handler (bypasses useMutation for per-cell tracking).
   const handleEditCell = useCallback(
     async (rowIndex: number, column: string, newValue: WireCell) => {
       const where = buildPkWhere(rowIndex);
       if (!where) return;
+
+      const colIdx = browseQuery.data?.columns.findIndex((c) => c.name === column);
+      const currentCell = colIdx !== undefined && colIdx >= 0 ? browseQuery.data?.rows[rowIndex]?.[colIdx] : undefined;
+      if (cellValuesEqual(currentCell, newValue)) return;
 
       const key = cellKey(rowIndex, column);
       setSavingCells((prev) => new Set(prev).add(key));
@@ -135,9 +137,8 @@ export default function TableView() {
       } catch (err) {
         const msg = err instanceof ApiError ? err.message : "Update failed";
         setCellErrors((prev) => new Map(prev).set(key, msg));
-        addToast("error", `${column}: ${msg}`);
+        toast.error(`${column}: ${msg}`, { duration: Infinity });
 
-        // Handle unscoped mutation flow
         if (err instanceof ApiError && err.code === "unscoped_mutation") {
           const detail = err.detail as { affected?: number; sql?: string } | undefined;
           const count = detail?.affected ?? 0;
@@ -158,10 +159,9 @@ export default function TableView() {
         });
       }
     },
-    [buildPkWhere, schema, tableName, invalidateBrowse, addToast]
+    [buildPkWhere, schema, tableName, invalidateBrowse, browseQuery.data]
   );
 
-  // Delete mutation (keep useMutation for simplicity — one at a time)
   const deleteMutation = useMutation({
     mutationFn: async ({
       where,
@@ -186,7 +186,7 @@ export default function TableView() {
           },
         });
       } else {
-        addToast("error", err instanceof ApiError ? err.message : "Delete failed");
+        toast.error(err instanceof ApiError ? err.message : "Delete failed", { duration: Infinity });
       }
     },
   });
@@ -204,11 +204,11 @@ export default function TableView() {
     try {
       await api.insertRow(schema, tableName, {});
       invalidateBrowse();
-      addToast("success", "Row added");
+      toast.success("Row added");
     } catch (err) {
-      addToast("error", err instanceof ApiError ? err.message : "Failed to add row. Fill in required columns.");
+      toast.error(err instanceof ApiError ? err.message : "Failed to add row. Fill in required columns.", { duration: Infinity });
     }
-  }, [schema, tableName, invalidateBrowse, addToast]);
+  }, [schema, tableName, invalidateBrowse]);
 
   const handleRefresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.schema });
@@ -217,20 +217,20 @@ export default function TableView() {
   }, [queryClient, invalidateBrowse]);
 
   if (schemaQuery.isLoading) {
-    return <div className="p-6 text-sm text-slate-400">Loading schema...</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Loading schema...</div>;
   }
 
   if (!tableSchema) {
     return (
-      <div className="p-6 text-sm text-slate-500">
-        Table <strong>{schemaTable}</strong> not found in schema.
+      <div className="p-6 text-sm text-muted-foreground">
+        Table <strong className="text-foreground">{schemaTable}</strong> not found in schema.
       </div>
     );
   }
 
   if (browseQuery.isError) {
     return (
-      <div className="p-6 text-sm text-red-500">
+      <div className="p-6 text-sm text-destructive">
         Failed to load rows:{" "}
         {browseQuery.error instanceof ApiError
           ? browseQuery.error.message
@@ -254,18 +254,20 @@ export default function TableView() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-4 py-2 border-b border-slate-200 bg-white shrink-0 flex items-center gap-2">
-        <h1 className="text-sm font-semibold text-slate-800">
+      <div className="px-4 py-2 border-b border-border bg-card shrink-0 flex items-center gap-2">
+        <h1 className="text-sm font-semibold text-foreground">
           {schema}.{tableName}
         </h1>
-        <span className="text-xs text-slate-400">{rowCountLabel}</span>
-        <button
+        <span className="text-xs text-muted-foreground">{rowCountLabel}</span>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleRefresh}
-          className="ml-auto text-xs text-slate-400 hover:text-slate-700 px-2 py-1 border border-slate-200 rounded hover:bg-slate-50"
+          className="ml-auto"
           title="Refresh schema and rows"
         >
           Refresh
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -300,8 +302,6 @@ export default function TableView() {
           onCancel={() => setUnscopedState(null)}
         />
       )}
-
-      <ToastList toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
