@@ -150,7 +150,7 @@ func Introspect(ctx context.Context, pool *Pool) (*Schema, error) {
 		  n.nspname AS schema,
 		  c.relname AS name,
 		  c.reltuples::bigint AS estimated_rows,
-		  c.relkind AS kind
+		  c.relkind::text AS kind
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind IN ('r','v','m','p')
@@ -163,7 +163,6 @@ func Introspect(ctx context.Context, pool *Pool) (*Schema, error) {
 	}
 	defer tableRows.Close()
 
-	type tableKey struct{ schema, name string }
 	var tables []Table
 	tableIdx := map[tableKey]int{}
 
@@ -181,44 +180,29 @@ func Introspect(ctx context.Context, pool *Pool) (*Schema, error) {
 		return nil, fmt.Errorf("iterate tables: %w", err)
 	}
 
-	// --- 3. Columns (per table) ---
-	for i := range tables {
-		qualName := tables[i].Schema + "." + tables[i].Name
-		cols, err := introspectColumns(ctx, pool, qualName, enumSet)
-		if err != nil {
-			return nil, fmt.Errorf("introspect columns for %s: %w", qualName, err)
-		}
-		tables[i].Columns = cols
+	// Load columns, primary keys, unique constraints, and foreign keys for
+	// every user table in a single query each, then bucket the rows back into
+	// the tables slice. This replaces an earlier per-table loop (4×N queries)
+	// that became unbearable over high-latency remote proxies like Railway.
+
+	// --- 3. Columns (all tables) ---
+	if err := introspectAllColumns(ctx, pool, tables, tableIdx, enumSet); err != nil {
+		return nil, fmt.Errorf("introspect columns: %w", err)
 	}
 
-	// --- 4. Primary Keys (per table) ---
-	for i := range tables {
-		qualName := tables[i].Schema + "." + tables[i].Name
-		pk, err := introspectPrimaryKey(ctx, pool, qualName)
-		if err != nil {
-			return nil, fmt.Errorf("introspect pk for %s: %w", qualName, err)
-		}
-		tables[i].PrimaryKey = pk
+	// --- 4. Primary Keys (all tables) ---
+	if err := introspectAllPrimaryKeys(ctx, pool, tables, tableIdx); err != nil {
+		return nil, fmt.Errorf("introspect primary keys: %w", err)
 	}
 
-	// --- 5. Unique Constraints (per table) ---
-	for i := range tables {
-		qualName := tables[i].Schema + "." + tables[i].Name
-		ucs, err := introspectUniqueConstraints(ctx, pool, qualName)
-		if err != nil {
-			return nil, fmt.Errorf("introspect unique constraints for %s: %w", qualName, err)
-		}
-		tables[i].UniqueConstraints = ucs
+	// --- 5. Unique Constraints (all tables) ---
+	if err := introspectAllUniqueConstraints(ctx, pool, tables, tableIdx); err != nil {
+		return nil, fmt.Errorf("introspect unique constraints: %w", err)
 	}
 
-	// --- 6. Foreign Keys (per table) ---
-	for i := range tables {
-		qualName := tables[i].Schema + "." + tables[i].Name
-		fks, err := introspectForeignKeys(ctx, pool, qualName)
-		if err != nil {
-			return nil, fmt.Errorf("introspect fks for %s: %w", qualName, err)
-		}
-		tables[i].ForeignKeys = fks
+	// --- 6. Foreign Keys (all tables) ---
+	if err := introspectAllForeignKeys(ctx, pool, tables, tableIdx); err != nil {
+		return nil, fmt.Errorf("introspect foreign keys: %w", err)
 	}
 
 	// --- Classify editability ---
@@ -241,7 +225,6 @@ func Introspect(ctx context.Context, pool *Pool) (*Schema, error) {
 		}
 	}
 
-	_ = tableIdx // used implicitly above
 	return &Schema{Tables: tables, Enums: enums}, nil
 }
 
@@ -279,9 +262,15 @@ func introspectEnums(ctx context.Context, pool *Pool) ([]Enum, map[string]bool, 
 	return enums, enumSet, rows.Err()
 }
 
-func introspectColumns(ctx context.Context, pool *Pool, qualTable string, enumSet map[string]bool) ([]Column, error) {
+// tableKey identifies a table by (schema, name) for result bucketing.
+type tableKey struct{ schema, name string }
+
+// introspectAllColumns loads every column for every user table in one query.
+func introspectAllColumns(ctx context.Context, pool *Pool, tables []Table, tableIdx map[tableKey]int, enumSet map[string]bool) error {
 	rows, err := pool.Query(ctx, `
 		SELECT
+		  n.nspname AS schema,
+		  c.relname AS table_name,
 		  a.attname AS column_name,
 		  a.attnum AS ordinal,
 		  a.atttypid AS type_oid,
@@ -292,29 +281,34 @@ func introspectColumns(ctx context.Context, pool *Pool, qualTable string, enumSe
 		  a.attidentity IN ('a','d') AS is_identity,
 		  a.attgenerated = 's' AS is_generated
 		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
 		JOIN pg_type t ON t.oid = a.atttypid
 		LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-		WHERE a.attrelid = $1::regclass
+		WHERE c.relkind IN ('r','v','m','p')
+		  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
 		  AND a.attnum > 0
 		  AND NOT a.attisdropped
-		ORDER BY a.attnum
-	`, qualTable)
+		ORDER BY n.nspname, c.relname, a.attnum
+	`)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
 
-	var cols []Column
 	for rows.Next() {
+		var schema, tableName string
 		var c Column
 		var typeOID uint32
 		if err := rows.Scan(
+			&schema, &tableName,
 			&c.Name, &c.Ordinal, &typeOID,
 			&c.Type, &c.TypeName,
 			&c.Nullable, &c.Default,
 			&c.IsIdentity, &c.IsGenerated,
 		); err != nil {
-			return nil, err
+			return err
 		}
 		c.TypeOID = typeOID
 		if enumSet[c.TypeName] {
@@ -324,97 +318,128 @@ func introspectColumns(ctx context.Context, pool *Pool, qualTable string, enumSe
 		} else {
 			c.Editor = EditorForTypeName(c.TypeName)
 		}
-		cols = append(cols, c)
-	}
-	return cols, rows.Err()
-}
-
-func introspectPrimaryKey(ctx context.Context, pool *Pool, qualTable string) ([]string, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT a.attname AS column_name
-		FROM pg_constraint c
-		JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-		WHERE c.conrelid = $1::regclass AND c.contype = 'p'
-		ORDER BY a.attnum
-	`, qualTable)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var pk []string
-	for rows.Next() {
-		var col string
-		if err := rows.Scan(&col); err != nil {
-			return nil, err
+		if idx, ok := tableIdx[tableKey{schema, tableName}]; ok {
+			tables[idx].Columns = append(tables[idx].Columns, c)
 		}
-		pk = append(pk, col)
 	}
-	return pk, rows.Err()
+	return rows.Err()
 }
 
-func introspectUniqueConstraints(ctx context.Context, pool *Pool, qualTable string) ([][]string, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT array_agg(a.attname ORDER BY a.attnum) AS columns
-		FROM pg_constraint c
-		JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-		WHERE c.conrelid = $1::regclass AND c.contype = 'u'
-		GROUP BY c.conname
-		ORDER BY c.conname
-	`, qualTable)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ucs [][]string
-	for rows.Next() {
-		var cols []string
-		if err := rows.Scan(&cols); err != nil {
-			return nil, err
-		}
-		ucs = append(ucs, cols)
-	}
-	return ucs, rows.Err()
-}
-
-func introspectForeignKeys(ctx context.Context, pool *Pool, qualTable string) ([]ForeignKey, error) {
-	// Corrected FK query from plan revision B7 — uses WITH ORDINALITY to
-	// preserve declared column position in multi-column FKs.
+// introspectAllPrimaryKeys loads primary-key column lists for every user table.
+func introspectAllPrimaryKeys(ctx context.Context, pool *Pool, tables []Table, tableIdx map[tableKey]int) error {
 	rows, err := pool.Query(ctx, `
 		SELECT
-		  c.conname AS constraint_name,
-		  c.conrelid::regclass::text AS local_table,
-		  (SELECT array_agg(la.attname ORDER BY k.ord)
-		     FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
-		     JOIN pg_attribute la ON la.attrelid = c.conrelid AND la.attnum = k.attnum) AS local_columns,
-		  c.confrelid::regclass::text AS foreign_table,
-		  (SELECT array_agg(fa.attname ORDER BY k.ord)
-		     FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
-		     JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = k.attnum) AS foreign_columns,
-		  c.confdeltype AS on_delete,
-		  c.confupdtype AS on_update
-		FROM pg_constraint c
-		WHERE c.contype = 'f' AND c.conrelid = $1::regclass
-	`, qualTable)
+		  n.nspname AS schema,
+		  c.relname AS table_name,
+		  a.attname AS column_name
+		FROM pg_constraint con
+		JOIN pg_class c ON c.oid = con.conrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+		WHERE con.contype = 'p'
+		  AND c.relkind IN ('r','v','m','p')
+		  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		ORDER BY n.nspname, c.relname, a.attnum
+	`)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
 
-	var fks []ForeignKey
 	for rows.Next() {
+		var schema, tableName, col string
+		if err := rows.Scan(&schema, &tableName, &col); err != nil {
+			return err
+		}
+		if idx, ok := tableIdx[tableKey{schema, tableName}]; ok {
+			tables[idx].PrimaryKey = append(tables[idx].PrimaryKey, col)
+		}
+	}
+	return rows.Err()
+}
+
+// introspectAllUniqueConstraints loads unique-constraint column groups for every user table.
+func introspectAllUniqueConstraints(ctx context.Context, pool *Pool, tables []Table, tableIdx map[tableKey]int) error {
+	rows, err := pool.Query(ctx, `
+		SELECT
+		  n.nspname AS schema,
+		  c.relname AS table_name,
+		  con.conname AS constraint_name,
+		  array_agg(a.attname ORDER BY a.attnum) AS columns
+		FROM pg_constraint con
+		JOIN pg_class c ON c.oid = con.conrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+		WHERE con.contype = 'u'
+		  AND c.relkind IN ('r','v','m','p')
+		  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		GROUP BY n.nspname, c.relname, con.conname
+		ORDER BY n.nspname, c.relname, con.conname
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schema, tableName, conName string
+		var cols []string
+		if err := rows.Scan(&schema, &tableName, &conName, &cols); err != nil {
+			return err
+		}
+		if idx, ok := tableIdx[tableKey{schema, tableName}]; ok {
+			tables[idx].UniqueConstraints = append(tables[idx].UniqueConstraints, cols)
+		}
+	}
+	return rows.Err()
+}
+
+// introspectAllForeignKeys loads foreign-key constraints for every user table.
+// Uses WITH ORDINALITY to preserve declared column position in multi-column FKs.
+func introspectAllForeignKeys(ctx context.Context, pool *Pool, tables []Table, tableIdx map[tableKey]int) error {
+	rows, err := pool.Query(ctx, `
+		SELECT
+		  n.nspname AS schema,
+		  c.relname AS table_name,
+		  con.conname AS constraint_name,
+		  (SELECT array_agg(la.attname ORDER BY k.ord)
+		     FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+		     JOIN pg_attribute la ON la.attrelid = con.conrelid AND la.attnum = k.attnum) AS local_columns,
+		  con.confrelid::regclass::text AS foreign_table,
+		  (SELECT array_agg(fa.attname ORDER BY k.ord)
+		     FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
+		     JOIN pg_attribute fa ON fa.attrelid = con.confrelid AND fa.attnum = k.attnum) AS foreign_columns,
+		  con.confdeltype::text AS on_delete,
+		  con.confupdtype::text AS on_update
+		FROM pg_constraint con
+		JOIN pg_class c ON c.oid = con.conrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE con.contype = 'f'
+		  AND c.relkind IN ('r','v','m','p')
+		  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		ORDER BY n.nspname, c.relname, con.conname
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schema, tableName, foreignTable string
 		var fk ForeignKey
-		var localTable, foreignTable string
 		var localCols, foreignCols []string
 		var onDelete, onUpdate string
 		if err := rows.Scan(
+			&schema, &tableName,
 			&fk.Name,
-			&localTable, &localCols,
+			&localCols,
 			&foreignTable, &foreignCols,
 			&onDelete, &onUpdate,
 		); err != nil {
-			return nil, err
+			return err
 		}
 		fk.Columns = localCols
 
@@ -430,7 +455,10 @@ func introspectForeignKeys(ctx context.Context, pool *Pool, qualTable string) ([
 		fk.RefColumns = foreignCols
 		fk.OnDelete = fkActionName(onDelete)
 		fk.OnUpdate = fkActionName(onUpdate)
-		fks = append(fks, fk)
+
+		if idx, ok := tableIdx[tableKey{schema, tableName}]; ok {
+			tables[idx].ForeignKeys = append(tables[idx].ForeignKeys, fk)
+		}
 	}
-	return fks, rows.Err()
+	return rows.Err()
 }

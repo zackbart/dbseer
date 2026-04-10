@@ -96,7 +96,7 @@ export interface Sort {
 export interface BrowseResponse {
   columns: ResultColumn[];
   rows: WireCell[][];
-  page: { limit: number; offset: number; total: number };
+  page: { limit: number; offset: number; total: number; is_estimated?: boolean };
   sort: { column: string; dir: "asc" | "desc" }[];
   filters: { column: string; op: string; val: string }[];
 }

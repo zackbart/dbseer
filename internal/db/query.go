@@ -7,8 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/zackbart/dbseer/internal/wire"
 )
+
+// EstimateThreshold is the row count above which Browse() skips an exact
+// COUNT(*) on unfiltered queries and uses pg_class.reltuples instead. Below
+// this threshold COUNT(*) is fast enough to scan even over a remote proxy.
+const EstimateThreshold = 100_000
 
 // FilterOp is the type for filter operators used in browse requests.
 type FilterOp string
@@ -57,9 +64,10 @@ type BrowseRequest struct {
 
 // BrowseResponse is the result of a browse query.
 type BrowseResponse struct {
-	Columns []ResultColumn
-	Rows    [][]wire.Cell
-	Total   int64
+	Columns     []ResultColumn
+	Rows        [][]wire.Cell
+	Total       int64
+	IsEstimated bool // true when Total comes from pg_class.reltuples (no COUNT(*) was run)
 }
 
 // ResultColumn describes a column in the browse response.
@@ -70,28 +78,110 @@ type ResultColumn struct {
 }
 
 // Browse executes a paginated browse query against the given table.
-// It returns a BrowseResponse with columns, rows as wire cells, and the total
-// count matching the filter (separate COUNT(*) query).
+//
+// Two execution paths:
+//
+//  1. Estimate fast-path: when no filters are applied AND the table's cached
+//     pg_class.reltuples value (tableMeta.EstimatedRows) is at or above
+//     EstimateThreshold, COUNT(*) is skipped entirely. The cached estimate
+//     is returned with IsEstimated=true. This avoids multi-second sequential
+//     scans on large tables over high-latency proxies.
+//
+//  2. Parallel path: SELECT and exact COUNT(*) run concurrently via
+//     errgroup.WithContext. If either fails, the other's context is canceled
+//     and pgx aborts in-flight rows iteration cleanly.
+//
+// In the estimate path, if the SELECT returns a partial page (fewer rows than
+// the limit) past the first page, the total is clamped down to
+// offset+len(rows). This self-corrects pagination when reltuples is stale.
 func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest) (*BrowseResponse, error) {
 	sql, args, err := req.buildSQL(tableMeta.Columns)
 	if err != nil {
 		return nil, err
 	}
 
+	// --- Path 1: estimate fast-path ---
+	if len(req.Filters) == 0 && tableMeta.EstimatedRows >= EstimateThreshold {
+		resultRows, colMeta, err := executeBrowseSelect(ctx, pool, sql, args, tableMeta)
+		if err != nil {
+			return nil, err
+		}
+
+		total := tableMeta.EstimatedRows
+
+		// Self-clamp: a partial page proves we've hit the real end of the table.
+		// Clamp total down so the UI stops paginating into empty space when
+		// reltuples is stale (e.g. table was bulk-loaded then truncated).
+		limit := req.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		if int64(len(resultRows)) < int64(limit) {
+			actualEnd := int64(req.Offset) + int64(len(resultRows))
+			if actualEnd < total {
+				total = actualEnd
+			}
+		}
+
+		return &BrowseResponse{
+			Columns:     colMeta,
+			Rows:        resultRows,
+			Total:       total,
+			IsEstimated: true,
+		}, nil
+	}
+
+	// --- Path 2: parallel SELECT + COUNT ---
+	g, gctx := errgroup.WithContext(ctx)
+	var (
+		resultRows [][]wire.Cell
+		colMeta    []ResultColumn
+		total      int64
+	)
+	g.Go(func() error {
+		var err error
+		resultRows, colMeta, err = executeBrowseSelect(gctx, pool, sql, args, tableMeta)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		total, err = browseCount(gctx, pool, tableMeta.Columns, req)
+		if err != nil {
+			return fmt.Errorf("count query: %w", err)
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return &BrowseResponse{
+		Columns:     colMeta,
+		Rows:        resultRows,
+		Total:       total,
+		IsEstimated: false,
+	}, nil
+}
+
+// executeBrowseSelect runs the row-fetching SELECT and converts each row to
+// a slice of wire.Cell. The pgx rows cursor is closed via defer in this
+// function — callers must NOT call Close on the result. Safe to invoke from
+// inside an errgroup goroutine: cursor lifetime is contained.
+func executeBrowseSelect(ctx context.Context, pool *Pool, sql string, args []any, tableMeta Table) ([][]wire.Cell, []ResultColumn, error) {
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("browse query: %w", err)
+		return nil, nil, fmt.Errorf("browse query: %w", err)
 	}
 	defer rows.Close()
 
 	fds := rows.FieldDescriptions()
 
-	// Build ResultColumn list from field descriptions.
-	colMeta := make([]ResultColumn, len(fds))
 	colMap := map[string]Column{}
 	for _, c := range tableMeta.Columns {
 		colMap[c.Name] = c
 	}
+
+	colMeta := make([]ResultColumn, len(fds))
 	for i, fd := range fds {
 		name := fd.Name
 		colMeta[i].Name = name
@@ -101,18 +191,16 @@ func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest)
 		}
 	}
 
-	// Collect rows.
-	colsByName := colMap
 	var resultRows [][]wire.Cell
 	for rows.Next() {
 		vals, err := rows.Values()
 		if err != nil {
-			return nil, fmt.Errorf("scan row: %w", err)
+			return nil, nil, fmt.Errorf("scan row: %w", err)
 		}
 		cells := make([]wire.Cell, len(vals))
 		for i, v := range vals {
 			name := fds[i].Name
-			if mc, ok := colsByName[name]; ok {
+			if mc, ok := colMap[name]; ok {
 				if mc.EnumName != nil {
 					cells[i] = wire.MarshalEnum(v)
 				} else {
@@ -125,20 +213,9 @@ func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest)
 		resultRows = append(resultRows, cells)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("row iteration: %w", err)
+		return nil, nil, fmt.Errorf("row iteration: %w", err)
 	}
-
-	// Count query.
-	total, err := browseCount(ctx, pool, tableMeta.Columns, req)
-	if err != nil {
-		return nil, fmt.Errorf("count query: %w", err)
-	}
-
-	return &BrowseResponse{
-		Columns: colMeta,
-		Rows:    resultRows,
-		Total:   total,
-	}, nil
+	return resultRows, colMeta, nil
 }
 
 // browseCount runs a COUNT(*) with the same WHERE clause as the browse query.
@@ -252,7 +329,8 @@ func (req BrowseRequest) buildSQL(cols []Column) (string, []any, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	sb.WriteString(fmt.Sprintf(" LIMIT %d OFFSET %d", limit, req.Offset))
+	sb.WriteString(fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2))
+	args = append(args, limit, req.Offset)
 
 	return sb.String(), args, nil
 }
@@ -330,7 +408,8 @@ func buildSQLWithMeta(req BrowseRequest, tableMeta Table) (string, []any, error)
 	if limit <= 0 {
 		limit = 50
 	}
-	sb.WriteString(fmt.Sprintf(" LIMIT %d OFFSET %d", limit, req.Offset))
+	sb.WriteString(fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2))
+	args = append(args, limit, req.Offset)
 
 	return sb.String(), args, nil
 }

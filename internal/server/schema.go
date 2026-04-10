@@ -68,6 +68,7 @@ func (s *Server) handleSchema(w http.ResponseWriter, r *http.Request) {
 
 	schema, err := s.cfg.Cache.Get(r.Context(), s.cfg.Pool, refresh)
 	if err != nil {
+		s.cfg.Logger.Error("schema introspection failed", "err", err)
 		writeError(w, 500, "db_error", "failed to introspect schema", map[string]string{"pg_error": err.Error()})
 		return
 	}

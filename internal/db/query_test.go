@@ -39,14 +39,17 @@ func TestBuildSQL_Simple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(args) != 0 {
-		t.Errorf("expected no args, got %d", len(args))
+	if len(args) != 2 {
+		t.Errorf("expected 2 args (limit, offset), got %d", len(args))
+	}
+	if args[0] != 50 || args[1] != 0 {
+		t.Errorf("expected args [50, 0], got %v", args)
 	}
 	if !strings.Contains(sql, `"public"."users"`) {
 		t.Errorf("SQL missing qualified table: %s", sql)
 	}
-	if !strings.Contains(sql, "LIMIT 50 OFFSET 0") {
-		t.Errorf("SQL missing LIMIT/OFFSET: %s", sql)
+	if !strings.Contains(sql, "LIMIT $1 OFFSET $2") {
+		t.Errorf("SQL missing LIMIT/OFFSET placeholders: %s", sql)
 	}
 	if !strings.HasPrefix(sql, "SELECT * FROM") {
 		t.Errorf("SQL should start with SELECT * FROM: %s", sql)
@@ -66,14 +69,20 @@ func TestBuildSQL_FilterContains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(args) != 1 {
-		t.Errorf("expected 1 arg, got %d: %v", len(args), args)
+	if len(args) != 3 {
+		t.Errorf("expected 3 args (filter, limit, offset), got %d: %v", len(args), args)
 	}
 	if args[0] != "example" {
-		t.Errorf("expected arg %q, got %v", "example", args[0])
+		t.Errorf("expected arg[0] %q, got %v", "example", args[0])
+	}
+	if args[1] != 50 || args[2] != 0 {
+		t.Errorf("expected args[1,2] [50, 0], got %v", args[1:])
 	}
 	if !strings.Contains(sql, `"email" ILIKE '%' || $1 || '%'`) {
 		t.Errorf("SQL missing ILIKE pattern: %s", sql)
+	}
+	if !strings.Contains(sql, "LIMIT $2 OFFSET $3") {
+		t.Errorf("SQL missing LIMIT/OFFSET placeholders: %s", sql)
 	}
 }
 
@@ -172,8 +181,8 @@ func TestBuildSQL_InOperator(t *testing.T) {
 	if !strings.Contains(sql, `"role" = ANY($1)`) {
 		t.Errorf("SQL missing ANY operator: %s", sql)
 	}
-	if len(args) != 1 {
-		t.Errorf("expected 1 arg, got %d", len(args))
+	if len(args) != 3 {
+		t.Errorf("expected 3 args (filter, limit, offset), got %d", len(args))
 	}
 	parts, ok := args[0].([]string)
 	if !ok {
@@ -197,8 +206,8 @@ func TestBuildSQL_IsNullConsumesNoParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(args) != 0 {
-		t.Errorf("is_null should consume no params, got %d: %v", len(args), args)
+	if len(args) != 2 {
+		t.Errorf("is_null filter should produce 2 args (limit, offset), got %d: %v", len(args), args)
 	}
 	if !strings.Contains(sql, `"email" IS NULL`) {
 		t.Errorf("SQL missing IS NULL: %s", sql)
@@ -221,8 +230,11 @@ func TestBuildSQL_StartsWith(t *testing.T) {
 	if !strings.Contains(sql, `"email" ILIKE $1 || '%'`) {
 		t.Errorf("SQL missing starts_with pattern: %s", sql)
 	}
-	if len(args) != 1 || args[0] != "alice" {
+	if len(args) != 3 || args[0] != "alice" {
 		t.Errorf("unexpected args: %v", args)
+	}
+	if args[1] != 50 || args[2] != 0 {
+		t.Errorf("expected args[1,2] [50, 0], got %v", args[1:])
 	}
 }
 
@@ -285,7 +297,7 @@ func TestBuildSQL_DefaultLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(sql, "LIMIT 50") {
-		t.Errorf("expected default LIMIT 50: %s", sql)
+	if !strings.Contains(sql, "LIMIT $1") {
+		t.Errorf("expected default LIMIT $1 placeholder: %s", sql)
 	}
 }

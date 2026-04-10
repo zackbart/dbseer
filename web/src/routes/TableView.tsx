@@ -1,16 +1,22 @@
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { api, queryKeys, ApiError } from "../lib/api";
 import { decodeBrowseParams, encodeBrowseParams } from "../lib/url";
 import type { Filter, Sort, WireCell } from "../lib/types";
 import DataGrid from "../components/DataGrid";
 import ConfirmUnscoped from "../components/ConfirmUnscoped";
+import ToastList from "../components/Toast";
+import { useToasts } from "../lib/useToasts";
 
 interface UnscopedState {
   count: number;
   sql?: string;
   action: () => Promise<void>;
+}
+
+function cellKey(rowIndex: number, column: string) {
+  return `${rowIndex}:${column}`;
 }
 
 export default function TableView() {
@@ -19,6 +25,11 @@ export default function TableView() {
   const queryClient = useQueryClient();
 
   const [unscopedState, setUnscopedState] = useState<UnscopedState | null>(null);
+
+  // Cell-level mutation tracking (lifted from DataGrid to survive mutation lifecycle).
+  const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
+  const [cellErrors, setCellErrors] = useState<Map<string, string>>(new Map());
+  const { toasts, addToast, dismiss: dismissToast } = useToasts();
 
   // Parse schema/table from combined param
   const dotIdx = (schemaTable ?? "").indexOf(".");
@@ -46,6 +57,15 @@ export default function TableView() {
     [filters, sorts, limit, offset, setSearchParams]
   );
 
+  // Discover query (for column-sizing localStorage key scoping)
+  const discoverQuery = useQuery({
+    queryKey: queryKeys.discover,
+    queryFn: () => api.discover(),
+  });
+  const colSizingKey = discoverQuery.data
+    ? `dbseer:colWidths:${discoverQuery.data.host}:${discoverQuery.data.port}:${discoverQuery.data.database}:${schema}.${tableName}`
+    : undefined;
+
   // Schema query
   const schemaQuery = useQuery({
     queryKey: queryKeys.schema,
@@ -64,9 +84,17 @@ export default function TableView() {
     enabled: !!tableName,
   });
 
-  const invalidateBrowse = () => {
+  // Clear stale per-row state whenever browse data changes (pagination, sort,
+  // filter, or refetch). Without this, error indicators can mark the wrong row
+  // after a data change since they're keyed by positional row index.
+  useEffect(() => {
+    setCellErrors(new Map());
+    setSavingCells(new Set());
+  }, [browseQuery.data]);
+
+  const invalidateBrowse = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["browse", schema, tableName] });
-  };
+  }, [queryClient, schema, tableName]);
 
   // Build where clause from PK for a given row
   const buildPkWhere = useCallback(
@@ -87,37 +115,53 @@ export default function TableView() {
     [tableSchema, browseQuery.data]
   );
 
-  // Update mutation
-  const updateMutation = useMutation({
-    mutationFn: async ({
-      where,
-      values,
-      confirm,
-    }: {
-      where: Record<string, WireCell>;
-      values: Record<string, WireCell>;
-      confirm?: number;
-    }) => {
-      return api.updateRow(schema, tableName, where, values, confirm);
-    },
-    onSuccess: () => invalidateBrowse(),
-    onError: (err, variables) => {
-      if (err instanceof ApiError && err.code === "unscoped_mutation") {
-        const detail = err.detail as { affected?: number; sql?: string } | undefined;
-        const count = detail?.affected ?? 0;
-        setUnscopedState({
-          count,
-          sql: detail?.sql,
-          action: async () => {
-            await api.updateRow(schema, tableName, variables.where, variables.values, count);
-            invalidateBrowse();
-          },
+  // Direct cell-edit handler (bypasses useMutation for per-cell tracking).
+  const handleEditCell = useCallback(
+    async (rowIndex: number, column: string, newValue: WireCell) => {
+      const where = buildPkWhere(rowIndex);
+      if (!where) return;
+
+      const key = cellKey(rowIndex, column);
+      setSavingCells((prev) => new Set(prev).add(key));
+      setCellErrors((prev) => {
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      });
+
+      try {
+        await api.updateRow(schema, tableName, where, { [column]: newValue });
+        invalidateBrowse();
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.message : "Update failed";
+        setCellErrors((prev) => new Map(prev).set(key, msg));
+        addToast("error", `${column}: ${msg}`);
+
+        // Handle unscoped mutation flow
+        if (err instanceof ApiError && err.code === "unscoped_mutation") {
+          const detail = err.detail as { affected?: number; sql?: string } | undefined;
+          const count = detail?.affected ?? 0;
+          setUnscopedState({
+            count,
+            sql: detail?.sql,
+            action: async () => {
+              await api.updateRow(schema, tableName, where, { [column]: newValue }, count);
+              invalidateBrowse();
+            },
+          });
+        }
+      } finally {
+        setSavingCells((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
         });
       }
     },
-  });
+    [buildPkWhere, schema, tableName, invalidateBrowse, addToast]
+  );
 
-  // Delete mutation
+  // Delete mutation (keep useMutation for simplicity — one at a time)
   const deleteMutation = useMutation({
     mutationFn: async ({
       where,
@@ -141,18 +185,11 @@ export default function TableView() {
             invalidateBrowse();
           },
         });
+      } else {
+        addToast("error", err instanceof ApiError ? err.message : "Delete failed");
       }
     },
   });
-
-  const handleEditCell = useCallback(
-    (rowIndex: number, column: string, newValue: WireCell) => {
-      const where = buildPkWhere(rowIndex);
-      if (!where) return;
-      updateMutation.mutate({ where, values: { [column]: newValue } });
-    },
-    [buildPkWhere, updateMutation]
-  );
 
   const handleDeleteRow = useCallback(
     (rowIndex: number) => {
@@ -164,18 +201,23 @@ export default function TableView() {
   );
 
   const handleAddRow = useCallback(async () => {
-    // For v0.1, insert an empty row with defaults
     try {
       await api.insertRow(schema, tableName, {});
       invalidateBrowse();
-    } catch {
-      // Errors shown via alert for now — v0.1
-      alert("Failed to add row. Fill in required columns.");
+      addToast("success", "Row added");
+    } catch (err) {
+      addToast("error", err instanceof ApiError ? err.message : "Failed to add row. Fill in required columns.");
     }
-  }, [schema, tableName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [schema, tableName, invalidateBrowse, addToast]);
+
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.schema });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.discover });
+    invalidateBrowse();
+  }, [queryClient, invalidateBrowse]);
 
   if (schemaQuery.isLoading) {
-    return <div className="p-6 text-sm text-slate-400">Loading schema…</div>;
+    return <div className="p-6 text-sm text-slate-400">Loading schema...</div>;
   }
 
   if (!tableSchema) {
@@ -205,15 +247,25 @@ export default function TableView() {
     filters: [],
   };
 
+  const rowCountLabel =
+    tableSchema.estimated_rows < 0
+      ? "rows: unknown"
+      : `~${tableSchema.estimated_rows.toLocaleString()} rows`;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="px-4 py-2 border-b border-slate-200 bg-white shrink-0 flex items-center gap-2">
         <h1 className="text-sm font-semibold text-slate-800">
           {schema}.{tableName}
         </h1>
-        <span className="text-xs text-slate-400">
-          ~{tableSchema.estimated_rows.toLocaleString()} rows estimated
-        </span>
+        <span className="text-xs text-slate-400">{rowCountLabel}</span>
+        <button
+          onClick={handleRefresh}
+          className="ml-auto text-xs text-slate-400 hover:text-slate-700 px-2 py-1 border border-slate-200 rounded hover:bg-slate-50"
+          title="Refresh schema and rows"
+        >
+          Refresh
+        </button>
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -225,6 +277,9 @@ export default function TableView() {
           sorts={sorts}
           page={{ limit, offset }}
           enums={schemaQuery.data?.enums ?? []}
+          savingCells={savingCells}
+          cellErrors={cellErrors}
+          colSizingKey={colSizingKey}
           onFiltersChange={(f) => setUrlState({ filters: f, offset: 0 })}
           onSortsChange={(s) => setUrlState({ sorts: s })}
           onPageChange={(p) => setUrlState({ limit: p.limit, offset: p.offset })}
@@ -245,6 +300,8 @@ export default function TableView() {
           onCancel={() => setUnscopedState(null)}
         />
       )}
+
+      <ToastList toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

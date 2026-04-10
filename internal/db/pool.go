@@ -25,6 +25,19 @@ func NewPool(ctx context.Context, dsn string, readonly bool) (*Pool, error) {
 		return nil, fmt.Errorf("parse dsn: %w", err)
 	}
 
+	// Prisma-style DSNs include ?schema=public, which isn't a real Postgres
+	// runtime parameter — Postgres rejects it with FATAL "unrecognized
+	// configuration parameter". Translate it into search_path (unless one
+	// is already set explicitly).
+	if schema, ok := config.ConnConfig.RuntimeParams["schema"]; ok {
+		delete(config.ConnConfig.RuntimeParams, "schema")
+		if schema != "" {
+			if _, hasSearchPath := config.ConnConfig.RuntimeParams["search_path"]; !hasSearchPath {
+				config.ConnConfig.RuntimeParams["search_path"] = schema
+			}
+		}
+	}
+
 	if readonly {
 		// Belt and braces: every new connection starts with default_transaction_read_only=on.
 		config.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
@@ -49,8 +62,18 @@ func NewPool(ctx context.Context, dsn string, readonly bool) (*Pool, error) {
 func (p *Pool) Readonly() bool { return p.readonly }
 
 // registerUserTypes loads all user-defined enum, composite, and domain types
-// (and their array variants) into the connection's TypeMap. Individual type
-// load errors are tolerated — exotic types that can't be loaded are skipped.
+// (and their array variants) into the connection's TypeMap.
+//
+// Uses pgx 5.5+'s Conn.LoadTypes (plural) to fetch every type in a single
+// round-trip. The previous implementation called Conn.LoadType per type
+// inside a loop, which over a high-latency proxy (e.g. Railway) cost
+// N×RTT per new connection — multi-second AfterConnect stalls that
+// manifested as random timeouts on the first browse against any cold
+// connection from the pool.
+//
+// On any error from LoadTypes, we log and continue with whatever pgx was
+// able to register. Type loading is best-effort: exotic types that fail
+// to load just won't get binary decoding, falling back to text.
 func registerUserTypes(ctx context.Context, conn *pgx.Conn) error {
 	rows, err := conn.Query(ctx, `
 		SELECT typname
@@ -80,13 +103,20 @@ func registerUserTypes(ctx context.Context, conn *pgx.Conn) error {
 		slog.Warn("user type query error", "err", err)
 	}
 
-	for _, name := range names {
-		dt, err := conn.LoadType(ctx, name)
-		if err != nil {
-			slog.Debug("could not load type", "type", name, "err", err)
-			continue
-		}
-		conn.TypeMap().RegisterType(dt)
+	if len(names) == 0 {
+		return nil
 	}
+
+	// Single round-trip batch load via pgx 5.5+ LoadTypes (plural).
+	// LoadTypes returns the loaded types but does NOT register them — we
+	// hand the slice to TypeMap.RegisterTypes to complete the process.
+	// Type loading is best-effort: any error means we fall back to text
+	// decoding for the missing types but the connection stays usable.
+	loaded, err := conn.LoadTypes(ctx, names)
+	if err != nil {
+		slog.Debug("could not batch load user types", "count", len(names), "err", err)
+		return nil
+	}
+	conn.TypeMap().RegisterTypes(loaded)
 	return nil
 }

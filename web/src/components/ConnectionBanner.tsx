@@ -33,7 +33,7 @@ export default function ConnectionBanner() {
       <span className="text-slate-400">—</span>
       <span>{data.user}</span>
       <span className="ml-auto flex items-center gap-2">
-        <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-[11px]">
+        <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-[11px]" title={data.path}>
           {sourceLabel[data.source] ?? data.source}
         </span>
         {data.readonly && (

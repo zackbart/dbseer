@@ -32,9 +32,10 @@ type browseColumnJSON struct {
 }
 
 type browsePageJSON struct {
-	Limit  int   `json:"limit"`
-	Offset int   `json:"offset"`
-	Total  int64 `json:"total"`
+	Limit       int   `json:"limit"`
+	Offset      int   `json:"offset"`
+	Total       int64 `json:"total"`
+	IsEstimated bool  `json:"is_estimated"`
 }
 
 type browseSortJSON struct {
@@ -86,6 +87,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	result, err := db.Browse(r.Context(), s.cfg.Pool, tableMeta, req)
 	if err != nil {
+		s.cfg.Logger.Error("browse failed", "schema", schema, "table", table, "err", err)
 		writeError(w, 500, "db_error", "browse failed", map[string]string{"pg_error": err.Error()})
 		return
 	}
@@ -117,7 +119,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, browseResponseJSON{
 		Columns: cols,
 		Rows:    rows,
-		Page:    browsePageJSON{Limit: limit, Offset: offset, Total: result.Total},
+		Page:    browsePageJSON{Limit: limit, Offset: offset, Total: result.Total, IsEstimated: result.IsEstimated},
 		Sort:    sortJSON,
 		Filters: filterJSON,
 	})

@@ -5,7 +5,8 @@ import {
   flexRender,
   createColumnHelper,
 } from "@tanstack/react-table";
-import type { ColumnDef, SortingState } from "@tanstack/react-table";
+import type { ColumnDef, SortingState, ColumnSizingState } from "@tanstack/react-table";
+import { getJSON, setJSON } from "../lib/storage";
 import type {
   Table as TableSchema,
   BrowseResponse,
@@ -28,23 +29,15 @@ export interface DataGridProps {
   sorts: Sort[];
   page: { limit: number; offset: number };
   enums: EnumType[];
+  savingCells: Set<string>;
+  cellErrors: Map<string, string>;
+  colSizingKey?: string;
   onFiltersChange: (f: Filter[]) => void;
   onSortsChange: (s: Sort[]) => void;
   onPageChange: (p: { limit: number; offset: number }) => void;
   onEditCell: (rowIndex: number, column: string, newValue: WireCell) => void;
   onDeleteRow: (rowIndex: number) => void;
   onAddRow: () => void;
-}
-
-interface CellErrorState {
-  rowIndex: number;
-  column: string;
-  message: string;
-}
-
-interface CellSavingState {
-  rowIndex: number;
-  column: string;
 }
 
 function formatCellDisplay(cell: WireCell): string {
@@ -225,6 +218,9 @@ export default function DataGrid({
   sorts,
   page,
   enums,
+  savingCells,
+  cellErrors,
+  colSizingKey,
   onFiltersChange,
   onSortsChange,
   onPageChange,
@@ -233,9 +229,11 @@ export default function DataGrid({
   onAddRow,
 }: DataGridProps) {
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colName: string } | null>(null);
-  const [cellErrors, setCellErrors] = useState<CellErrorState[]>([]);
-  const [savingCells, setSavingCells] = useState<CellSavingState[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; colName?: string } | null>(null);
+  const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colName: string } | null>(null);
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(
+    () => colSizingKey ? getJSON<ColumnSizingState>(colSizingKey, {}) : {}
+  );
 
   const colHelper = createColumnHelper<RowData>();
 
@@ -249,8 +247,9 @@ export default function DataGrid({
         const rowIndex = info.row.index;
         const cell = info.getValue() as WireCell;
         const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.colName === col.name;
-        const errState = cellErrors.find((e) => e.rowIndex === rowIndex && e.column === col.name);
-        const savState = savingCells.find((s) => s.rowIndex === rowIndex && s.column === col.name);
+        const ck = `${rowIndex}:${col.name}`;
+        const errMsg = cellErrors.get(ck);
+        const isSaving = savingCells.has(ck);
 
         if (isEditing && table.editable) {
           return (
@@ -261,11 +260,7 @@ export default function DataGrid({
               enumName={tableCol?.enum_name ?? null}
               onCommit={(newVal) => {
                 setEditingCell(null);
-                setSavingCells((prev) => [...prev, { rowIndex, column: col.name }]);
-                setCellErrors((prev) => prev.filter((e) => !(e.rowIndex === rowIndex && e.column === col.name)));
                 onEditCell(rowIndex, col.name, newVal);
-                // Saving state cleared externally via prop effect
-                setSavingCells((prev) => prev.filter((s) => !(s.rowIndex === rowIndex && s.column === col.name)));
               }}
               onCancel={() => setEditingCell(null)}
             />
@@ -279,12 +274,11 @@ export default function DataGrid({
             tableSchema={table}
             schema={table.schema}
             table={table.name}
-            hasError={!!errState}
-            errorMsg={errState?.message}
-            isSaving={!!savState}
+            hasError={!!errMsg}
+            errorMsg={errMsg}
+            isSaving={isSaving}
             onDoubleClick={() => {
               if (table.editable) {
-                setCellErrors((prev) => prev.filter((e) => !(e.rowIndex === rowIndex && e.column === col.name)));
                 setEditingCell({ rowIndex, colName: col.name });
               }
             }}
@@ -329,10 +323,19 @@ export default function DataGrid({
     manualPagination: true,
     manualFiltering: true,
     manualSorting: true,
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
+    defaultColumn: { minSize: 50 },
     rowCount: data.page.total,
     state: {
       sorting: tanSorts,
       pagination: { pageIndex: Math.floor(page.offset / page.limit), pageSize: page.limit },
+      columnSizing,
+    },
+    onColumnSizingChange: (updater) => {
+      const next = typeof updater === "function" ? updater(columnSizing) : updater;
+      setColumnSizing(next);
+      if (colSizingKey) setJSON(colSizingKey, next);
     },
     onSortingChange: (updater) => {
       const next = typeof updater === "function" ? updater(tanSorts) : updater;
@@ -353,6 +356,60 @@ export default function DataGrid({
       onSortsChange(sorts.filter((s) => s.column !== col));
     },
     [sorts, onSortsChange]
+  );
+
+  const colNames = data.columns.map((c) => c.name);
+  const rowCount = reactTable.getRowModel().rows.length;
+
+  const handleGridKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(tag)) return;
+
+      if (e.key === "Escape") {
+        setEditingCell(null);
+        setFocusedCell(null);
+        return;
+      }
+
+      // Copy focused cell value
+      if ((e.metaKey || e.ctrlKey) && e.key === "c" && focusedCell) {
+        const colIdx = colNames.indexOf(focusedCell.colName);
+        if (colIdx >= 0) {
+          const row = data.rows[focusedCell.rowIndex];
+          if (row) {
+            const cellVal = row[colIdx];
+            const text = cellVal ? formatCellDisplay(cellVal) : "";
+            void navigator.clipboard.writeText(text);
+          }
+        }
+        e.preventDefault();
+        return;
+      }
+
+      // Enter to edit focused cell
+      if (e.key === "Enter" && focusedCell && table.editable) {
+        setEditingCell({ rowIndex: focusedCell.rowIndex, colName: focusedCell.colName });
+        e.preventDefault();
+        return;
+      }
+
+      // Arrow navigation
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        setFocusedCell((prev) => {
+          const r = prev?.rowIndex ?? 0;
+          const ci = prev ? colNames.indexOf(prev.colName) : 0;
+          let nr = r, nc = ci;
+          if (e.key === "ArrowUp") nr = Math.max(0, r - 1);
+          if (e.key === "ArrowDown") nr = Math.min(rowCount - 1, r + 1);
+          if (e.key === "ArrowLeft") nc = Math.max(0, ci - 1);
+          if (e.key === "ArrowRight") nc = Math.min(colNames.length - 1, ci + 1);
+          return { rowIndex: nr, colName: colNames[nc] };
+        });
+      }
+    },
+    [focusedCell, colNames, rowCount, data.rows, table.editable]
   );
 
   const handleHeaderClick = useCallback(
@@ -421,7 +478,7 @@ export default function DataGrid({
       )}
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto outline-none" tabIndex={0} onKeyDown={handleGridKeyDown}>
         {loading && (
           <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 pointer-events-none">
             <span className="text-slate-400 text-sm">Loading…</span>
@@ -438,17 +495,27 @@ export default function DataGrid({
                   return (
                     <th
                       key={header.id}
-                      className={`px-2 py-1.5 text-left font-medium text-slate-600 border-b border-slate-200 whitespace-nowrap ${
+                      className={`px-2 py-1.5 text-left font-medium text-slate-600 border-b border-slate-200 whitespace-nowrap relative ${
                         !isActions ? "cursor-pointer hover:bg-slate-100 select-none" : ""
                       }`}
                       onClick={isActions ? undefined : (e) => handleHeaderClick(colName, e)}
-                      style={{ width: isActions ? 32 : undefined }}
+                      style={{ width: isActions ? 32 : header.getSize() }}
                     >
                       {isActions ? null : (
                         <span className="flex items-center gap-1">
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           {sort ? (sort.desc ? " ↓" : " ↑") : <span className="text-slate-300"> ↕</span>}
                         </span>
+                      )}
+                      {!isActions && (
+                        <div
+                          onMouseDown={header.getResizeHandler()}
+                          onTouchStart={header.getResizeHandler()}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none ${
+                            header.column.getIsResizing() ? "bg-blue-400" : "hover:bg-slate-300"
+                          }`}
+                        />
                       )}
                     </th>
                   );
@@ -463,7 +530,15 @@ export default function DataGrid({
                   colSpan={allCols.length}
                   className="px-4 py-8 text-center text-slate-400 text-sm"
                 >
-                  No rows match these filters.
+                  <div>No rows match these filters.</div>
+                  {filters.length > 0 && (
+                    <button
+                      onClick={() => onFiltersChange([])}
+                      className="mt-2 text-xs text-blue-600 hover:text-blue-800 underline"
+                    >
+                      Clear all filters
+                    </button>
+                  )}
                 </td>
               </tr>
             ) : (
@@ -471,20 +546,32 @@ export default function DataGrid({
                 <tr
                   key={row.id}
                   className="hover:bg-slate-50 border-b border-slate-100 group"
-                  onContextMenu={(e) => {
-                    if (!table.editable) return;
-                    e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: row.index });
-                  }}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-2 py-1 max-w-[200px] overflow-hidden"
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const isFocused =
+                      focusedCell?.rowIndex === row.index &&
+                      focusedCell?.colName === cell.column.id;
+                    const isActionsCol = cell.column.id === "__actions__";
+                    return (
+                      <td
+                        key={cell.id}
+                        className={`px-2 py-1 overflow-hidden ${isFocused ? "ring-2 ring-blue-400 ring-inset" : ""}`}
+                        style={{ width: cell.column.getSize() }}
+                        onClick={() => {
+                          if (!isActionsCol) {
+                            setFocusedCell({ rowIndex: row.index, colName: cell.column.id });
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          if (!table.editable || isActionsCol) return;
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: row.index, colName: cell.column.id });
+                        }}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}
@@ -495,21 +582,49 @@ export default function DataGrid({
       {/* Pagination */}
       <div className="shrink-0 border-t border-slate-200 px-4 py-2 flex items-center gap-3 bg-white text-xs">
         <button
+          onClick={() => onPageChange({ limit: page.limit, offset: 0 })}
+          disabled={page.offset === 0}
+          className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40 hover:bg-slate-50"
+          title="First page"
+        >
+          &laquo;
+        </button>
+        <button
           onClick={() => onPageChange({ limit: page.limit, offset: Math.max(0, page.offset - page.limit) })}
           disabled={page.offset === 0}
           className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40 hover:bg-slate-50"
         >
-          ← Prev
+          Prev
         </button>
-        <span className="text-slate-600">
-          Page {currentPage} of {totalPages}
+        <span className="text-slate-600 flex items-center gap-1">
+          Page
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            value={currentPage}
+            onChange={(e) => {
+              const p = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
+              onPageChange({ limit: page.limit, offset: (p - 1) * page.limit });
+            }}
+            className="w-12 text-center border border-slate-200 rounded px-1 py-0.5 text-xs"
+          />
+          of {totalPages}
         </span>
         <button
           onClick={() => onPageChange({ limit: page.limit, offset: page.offset + page.limit })}
           disabled={currentPage >= totalPages}
           className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40 hover:bg-slate-50"
         >
-          Next →
+          Next
+        </button>
+        <button
+          onClick={() => onPageChange({ limit: page.limit, offset: (totalPages - 1) * page.limit })}
+          disabled={currentPage >= totalPages}
+          className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40 hover:bg-slate-50"
+          title="Last page"
+        >
+          &raquo;
         </button>
         <span className="ml-auto flex items-center gap-2 text-slate-500">
           <span>Rows per page:</span>
@@ -522,7 +637,15 @@ export default function DataGrid({
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-          <span className="text-slate-400">
+          <span
+            className="text-slate-400"
+            title={
+              data.page.is_estimated
+                ? "Estimated from pg_class.reltuples — exact count skipped because the table is large."
+                : undefined
+            }
+          >
+            {data.page.is_estimated ? "~" : ""}
             {data.page.total.toLocaleString()} total rows
           </span>
         </span>
@@ -536,9 +659,40 @@ export default function DataGrid({
             onClick={() => setContextMenu(null)}
           />
           <div
-            className="fixed z-50 bg-white border border-slate-200 rounded shadow-lg py-1"
+            className="fixed z-50 bg-white border border-slate-200 rounded shadow-lg py-1 min-w-[140px]"
             style={{ top: contextMenu.y, left: contextMenu.x }}
           >
+            {contextMenu.colName && (
+              <>
+                <button
+                  onClick={() => {
+                    setEditingCell({ rowIndex: contextMenu.rowIndex, colName: contextMenu.colName! });
+                    setContextMenu(null);
+                  }}
+                  className="block w-full text-left px-4 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  Edit cell
+                </button>
+                <button
+                  onClick={() => {
+                    const colIdx = data.columns.findIndex((c) => c.name === contextMenu.colName);
+                    if (colIdx >= 0) {
+                      const row = data.rows[contextMenu.rowIndex];
+                      if (row) {
+                        const cellVal = row[colIdx];
+                        const text = cellVal ? formatCellDisplay(cellVal) : "";
+                        void navigator.clipboard.writeText(text);
+                      }
+                    }
+                    setContextMenu(null);
+                  }}
+                  className="block w-full text-left px-4 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  Copy value
+                </button>
+                <div className="border-t border-slate-100 my-0.5" />
+              </>
+            )}
             <button
               onClick={() => {
                 onDeleteRow(contextMenu.rowIndex);
