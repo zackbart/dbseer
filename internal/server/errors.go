@@ -36,3 +36,15 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
+
+// ErrorCode constants for error responses.
+const (
+	ErrCodeInvalidRequest   = "invalid_request"
+	ErrCodeNotFound         = "not_found"
+	ErrCodeUnscopedMutation = "unscoped_mutation"
+	ErrCodeTableReadonly    = "table_readonly"
+	ErrCodeServerReadonly   = "server_readonly"
+	ErrCodeDBError          = "db_error"
+	ErrCodeInternal         = "internal"
+	ErrCodePayloadTooLarge  = "payload_too_large"
+)

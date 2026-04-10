@@ -84,6 +84,15 @@ dbseer is **strictly a dev tool**. It refuses to connect to anything that looks 
 
 When a safety rail fires, the error message tells you exactly which flag would unblock it and suggests running `--which` to see what was discovered without connecting.
 
+### Security hardening
+
+The server includes several security measures:
+
+- **HTTP security headers:** `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`
+- **Request timeouts:** Read timeout 10s, write timeout 30s, idle timeout 120s
+- **Request body limit:** Max 2MB per request
+- **Localhost-only by default:** Binds to `127.0.0.1` only
+
 ## Filter operators
 
 | Column type | Supported operators |

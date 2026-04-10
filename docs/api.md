@@ -74,6 +74,7 @@ Error codes:
 - `unscoped_mutation` — mutation would affect more than one row; requires confirmation header
 - `table_readonly` — edit attempted on a view, materialized view, or no-PK table
 - `server_readonly` — server started with `--readonly`, no mutations allowed
+- `payload_too_large` — request body exceeds 2MB limit
 - `db_error` — underlying Postgres error (detail.pg_error contains the message)
 - `internal` — unhandled error
 
@@ -297,6 +298,8 @@ Read the audit log (`.dbseer/history.jsonl`) with optional filters.
 ## Dev mode
 
 When `dbseer` is built with `-tags dev` and run with `--dev`, the backend reverse-proxies every non-`/api/*` request to the Vite dev server on `http://localhost:5173`. The user visits `http://localhost:4983` regardless. In production builds, the same non-API paths are served from the embedded frontend filesystem at `internal/ui/dist`.
+
+All responses include security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`, and `Permissions-Policy` to disable browser features not needed by the app.
 
 ## Notes for clients
 

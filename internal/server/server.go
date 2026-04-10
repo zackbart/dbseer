@@ -52,6 +52,8 @@ func New(cfg Config) *Server {
 	// Global middleware.
 	r.Use(requestLogger(cfg.Logger))
 	r.Use(recoverer(cfg.Logger))
+	r.Use(securityHeaders())
+	r.Use(maxBodySize(2 << 20)) // 2MB max request body
 	r.Use(readonlyGuard(cfg.Readonly))
 
 	// API routes.

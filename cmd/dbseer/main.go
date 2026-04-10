@@ -45,20 +45,20 @@ func run() error {
 	}
 
 	var (
-		urlFlag       string
-		hostFlag      string
-		portFlag      int
-		allowRemote   bool
-		allowProd     bool
-		readonlyFlag  bool
-		debugFlag     bool
-		quietFlag     bool
-		whichFlag     bool
-		dryRunFlag    bool
-		devFlag       bool
-		noOpenFlag    bool
-		envFlag       string
-		versionFlag   bool
+		urlFlag      string
+		hostFlag     string
+		portFlag     int
+		allowRemote  bool
+		allowProd    bool
+		readonlyFlag bool
+		debugFlag    bool
+		quietFlag    bool
+		whichFlag    bool
+		dryRunFlag   bool
+		devFlag      bool
+		noOpenFlag   bool
+		envFlag      string
+		versionFlag  bool
 	)
 
 	fs.StringVar(&urlFlag, "url", "", "Override discovery with a literal Postgres URL")
@@ -206,11 +206,14 @@ func run() error {
 		Logger:   logger,
 	})
 
-	// 13. Start http.Server on host:port.
+	// 13. Start http.Server on host:port with timeouts to prevent slowloris.
 	addr := net.JoinHostPort(hostFlag, fmt.Sprintf("%d", portFlag))
 	httpSrv := &http.Server{
-		Addr:    addr,
-		Handler: srv.Handler(),
+		Addr:         addr,
+		Handler:      srv.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	serverErr := make(chan error, 1)

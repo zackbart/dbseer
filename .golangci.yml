@@ -15,6 +15,9 @@ linters:
     - goimports
     - misspell
     - unconvert
+    - bodyclose
+    - noctx
+    - gocritic
 
 linters-settings:
   gosec:
