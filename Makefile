@@ -1,4 +1,4 @@
-.PHONY: dev build test lint fmt clean web-build web-dev web-install
+.PHONY: dev build test test-integration lint fmt clean web-build web-dev web-install
 
 BINARY := dbseer
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -25,6 +25,9 @@ web-dev: web-install
 
 test:
 	go test ./...
+
+test-integration:
+	DBSEER_TEST_POSTGRES_DSN="$(DBSEER_TEST_POSTGRES_DSN)" go test ./internal/db -run Integration
 
 lint:
 	golangci-lint run ./...

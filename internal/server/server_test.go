@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -202,26 +203,103 @@ func TestReadonlyGuard_AllowsMutationWhenNotReadonly(t *testing.T) {
 	}
 }
 
-// --- cellValueToString tests ---
+// --- same-origin mutation guard ---
 
-func TestCellValueToString_String(t *testing.T) {
-	b, _ := json.Marshal("hello")
-	if got := cellValueToString(b); got != "hello" {
-		t.Errorf("expected 'hello', got %q", got)
+func TestSameOriginMutationGuard_BlocksCrossSiteOrigin(t *testing.T) {
+	handler := sameOriginMutationGuard()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	req := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1:4983/api/tables/public/users/rows", nil)
+	req.Host = "127.0.0.1:4983"
+	req.Header.Set("Origin", "http://evil.example")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }
 
-func TestCellValueToString_Int(t *testing.T) {
-	b, _ := json.Marshal(42.0)
-	if got := cellValueToString(b); got != "42" {
-		t.Errorf("expected '42', got %q", got)
+func TestSameOriginMutationGuard_AllowsSameOrigin(t *testing.T) {
+	handler := sameOriginMutationGuard()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	req := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1:4983/api/tables/public/users/rows", nil)
+	req.Host = "127.0.0.1:4983"
+	req.Header.Set("Origin", "http://127.0.0.1:4983")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 
-func TestCellValueToString_Null(t *testing.T) {
-	b, _ := json.Marshal(nil)
-	if got := cellValueToString(b); got != "null" {
-		t.Errorf("expected 'null', got %q", got)
+func TestBasicAuthGuard_RejectsMissingCredentials(t *testing.T) {
+	handler := basicAuthGuard(AuthConfig{Username: "user", Password: "pass"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4983/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestCSRFGuard_RequiresMatchingHeader(t *testing.T) {
+	cfg := AuthConfig{Username: "user", Password: "pass", CSRFToken: "csrf-token"}
+	handler := csrfGuard(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4983/api/tables/public/users/rows", nil)
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: cfg.CSRFToken})
+	req.Header.Set("X-Dbseer-CSRF", "wrong")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestBuildTableJSON_UsesUniqueConstraintAsEditKey(t *testing.T) {
+	jsonTable := buildTableJSON(db.Table{
+		Schema:            "public",
+		Name:              "users",
+		Editable:          true,
+		UniqueConstraints: [][]string{{"email"}},
+	})
+
+	if len(jsonTable.EditKey) != 1 || jsonTable.EditKey[0] != "email" {
+		t.Fatalf("expected unique constraint edit key, got %#v", jsonTable.EditKey)
+	}
+}
+
+// --- decodeJSONBody tests ---
+
+func TestDecodeJSONBody_DisallowUnknownFields(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/tables/public/users/rows", bytes.NewBufferString(`{"values":{},"extra":true}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	var body insertBody
+	if err := decodeJSONBody(req, &body); err == nil {
+		t.Fatal("expected unknown field to be rejected")
+	}
+}
+
+func TestDecodeJSONBody_RejectsWrongContentType(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/tables/public/users/rows", bytes.NewBufferString(`{"values":{}}`))
+	req.Header.Set("Content-Type", "text/plain")
+
+	var body insertBody
+	if err := decodeJSONBody(req, &body); err == nil {
+		t.Fatal("expected wrong content type to be rejected")
 	}
 }
 

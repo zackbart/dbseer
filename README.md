@@ -57,6 +57,8 @@ dbseer --which
 | `--readonly` | off | Disable edit UI and set `default_transaction_read_only=on` on every session |
 | `--which` / `--dry-run` | — | Print the discovered connection and exit |
 | `--env <name>` | — | Pick a named environment from `.dbseer.json` |
+| `--http-user <name>` | env / off | HTTP basic-auth username for non-local binds |
+| `--http-password <value>` | env / off | HTTP basic-auth password for non-local binds |
 | `--no-open` | off | Don't open a browser automatically |
 | `--debug` / `--quiet` | — | slog level override (default Info) |
 | `--version` / `-v` | — | Print version and exit |
@@ -74,7 +76,7 @@ Prints the audit log (`.dbseer/history.jsonl` in the discovered project root, or
 
 dbseer is **strictly a dev tool**. It refuses to connect to anything that looks like production by default:
 
-- Binds to `127.0.0.1` only (override with `--host`)
+- Binds to `127.0.0.1` only by default; non-local binds require `--http-user` and `--http-password`
 - Refuses non-localhost DB hosts unless `--allow-remote` is passed
 - Refuses hostnames matching prod patterns unless `--allow-prod` is passed:
   - Suffixes: `*.rds.amazonaws.com`, `*.supabase.co`, `*.supabase.com`, `*.neon.tech`, `*.neon.build`, `*.planetscale.com`, `*.cockroachlabs.cloud`
@@ -88,9 +90,12 @@ When a safety rail fires, the error message tells you exactly which flag would u
 
 The server includes several security measures:
 
-- **HTTP security headers:** `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`
+- **HTTP security headers:** `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Referrer-Policy`, `Permissions-Policy`
+- **Same-origin write protection:** `POST`/`PATCH`/`DELETE` row mutations reject cross-site browser requests by validating `Origin` / `Referer` / `Sec-Fetch-Site`
+- **Authenticated remote access:** when binding to a non-local address, dbseer requires HTTP basic auth and a CSRF token on every state-changing request
 - **Request timeouts:** Read timeout 10s, write timeout 30s, idle timeout 120s
 - **Request body limit:** Max 2MB per request
+- **Strict JSON decoding:** mutation endpoints require `Content-Type: application/json`, reject unknown fields, and reject multiple JSON payloads in one body
 - **Localhost-only by default:** Binds to `127.0.0.1` only
 
 ## Filter operators
@@ -127,6 +132,7 @@ Other targets:
 ```sh
 make build                    # full production build (pnpm build + go build + embed)
 make test                     # go test ./...
+make test-integration         # run real Postgres mutation tests with DBSEER_TEST_POSTGRES_DSN=...
 make lint                     # golangci-lint + eslint
 make fmt                      # gofmt + prettier
 make clean                    # rm binary + dist + node_modules
@@ -150,18 +156,18 @@ web/                          Vite + React + Tailwind frontend
 docs/api.md                   authoritative HTTP API contract
 ```
 
-Tests are unit-level only in v0.1 (`internal/wire`, `internal/discover`, `internal/safety`, `internal/db` SQL builders, `internal/server` handler plumbing). Integration tests against a real Postgres via testcontainers are v0.2.
+Tests include unit coverage plus opt-in real Postgres mutation integration tests in `internal/db`. Run them with `DBSEER_TEST_POSTGRES_DSN=postgres://... make test-integration`.
 
 ## Known limitations (v0.1)
 
 - **`go install` is unsupported** — install via Homebrew, or build from source with `make build`. The embedded frontend must be built before the Go compile, which `go install` can't arrange.
-- **Tables without a primary key or unique constraint are read-only in the UI.** Prisma Studio has the same constraint; `ctid`-based editing is v0.2.
+- **Tables without a primary key or unique constraint are read-only in the UI.** Tables with a unique constraint but no primary key are editable using the server-provided `edit_key`.
 - **Views and materialized views are read-only** (expected — there's no sane "edit a view" story).
 - **PostGIS geometry columns display as `\xHEX`** placeholders. Rich map rendering is v0.2.
 - **JSON path filters are not supported** — only `is_null`/`is_not_null` on jsonb/json columns in v0.1.
 - **Row virtualization is not implemented** — page-based pagination (25/50/100/250) only. Tables with millions of rows will work; the grid just renders one page at a time.
 - **No query editor, no schema editing, no non-Postgres databases** — all v0.2+.
-- **No auth, no multi-user** — this is intentionally a dev-only, localhost-only tool.
+- **Not a multi-user admin tool** — remote access now requires explicit HTTP auth, but dbseer is still designed for trusted dev environments rather than shared production use.
 
 ## License
 

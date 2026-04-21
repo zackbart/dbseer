@@ -18,11 +18,11 @@ func makeInfo(host string) URLInfo {
 
 func TestValidateURL(t *testing.T) {
 	cases := []struct {
-		name        string
-		info        URLInfo
-		opts        Options
-		wantErr     bool
-		wantCode    string
+		name     string
+		info     URLInfo
+		opts     Options
+		wantErr  bool
+		wantCode string
 	}{
 		{
 			name:    "localhost always passes",
@@ -113,19 +113,22 @@ func TestValidateURL(t *testing.T) {
 
 func TestValidateBind(t *testing.T) {
 	cases := []struct {
-		host    string
-		wantErr bool
+		host        string
+		authEnabled bool
+		wantErr     bool
 	}{
-		{"127.0.0.1", false},
-		{"localhost", false},
-		{"::1", false},
-		{"0.0.0.0", true},
-		{"192.168.1.1", true},
-		{"", true},
+		{"127.0.0.1", false, false},
+		{"localhost", false, false},
+		{"::1", false, false},
+		{"0.0.0.0", false, true},
+		{"192.168.1.1", false, true},
+		{"0.0.0.0", true, false},
+		{"192.168.1.1", true, false},
+		{"", false, true},
 	}
 
 	for _, tc := range cases {
-		err := ValidateBind(tc.host)
+		err := ValidateBind(tc.host, tc.authEnabled)
 		if tc.wantErr && err == nil {
 			t.Errorf("ValidateBind(%q): expected error, got nil", tc.host)
 		}

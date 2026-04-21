@@ -35,17 +35,19 @@ func ValidateURL(info URLInfo, opts Options) error {
 }
 
 // ValidateBind checks whether host is an acceptable bind address for the
-// dbseer HTTP server. In v0.1, only loopback addresses are accepted.
-// Any other value is rejected with a clear error explaining the restriction.
-func ValidateBind(host string) error {
+// dbseer HTTP server. Non-local binds require HTTP auth to be configured.
+func ValidateBind(host string, authEnabled bool) error {
 	switch host {
 	case "127.0.0.1", "localhost", "::1":
+		return nil
+	}
+	if authEnabled {
 		return nil
 	}
 	return &SafetyError{
 		Code:   "localhost_bind",
 		Host:   host,
-		Reason: "dbseer binds to localhost only — this is a dev tool",
-		Fix:    "accepted values: 127.0.0.1, localhost, ::1  (no flag exists to change this in v0.1)",
+		Reason: "non-local binds require HTTP auth because dbseer can mutate data",
+		Fix:    "either bind to 127.0.0.1/localhost/::1, or set --http-user and --http-password before using a remote bind",
 	}
 }

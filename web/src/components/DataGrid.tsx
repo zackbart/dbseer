@@ -21,6 +21,7 @@ import FkLink from "./FkLink";
 import SortChips from "./SortChips";
 import FilterBar from "./FilterBar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -30,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ArrowUpDown, Plus, ScanSearch, SlidersHorizontal } from "lucide-react";
 
 export interface DataGridProps {
   table: TableSchema;
@@ -238,16 +240,20 @@ export default function DataGrid({
   onDeleteRow,
   onAddRow,
 }: DataGridProps) {
-  const [editingCell, setEditingCell] = useState<{ rowIndex: number; colName: string } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ rowIndex: number; colName: string } | null>(
+    null
+  );
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
     rowIndex: number;
     colName?: string;
   } | null>(null);
-  const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colName: string } | null>(null);
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(
-    () => (colSizingKey ? getJSON<ColumnSizingState>(colSizingKey, {}) : {})
+  const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colName: string } | null>(
+    null
+  );
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
+    colSizingKey ? getJSON<ColumnSizingState>(colSizingKey, {}) : {}
   );
 
   const colHelper = createColumnHelper<RowData>();
@@ -303,11 +309,23 @@ export default function DataGrid({
     });
   });
 
+  const rowNumberCol: ColumnDef<RowData, unknown> = {
+    id: "__rownum__",
+    header: "#",
+    size: 56,
+    enableResizing: false,
+    cell: (info) => (
+      <span className="block text-right text-[11px] font-medium tabular-nums text-muted-foreground">
+        {page.offset + info.row.index + 1}
+      </span>
+    ),
+  };
+
   // Add row-actions column
   const actionsCol: ColumnDef<RowData, unknown> = {
     id: "__actions__",
     header: "",
-    size: 32,
+    size: 40,
     cell: (info) => {
       const rowIndex = info.row.index;
       return (
@@ -316,7 +334,7 @@ export default function DataGrid({
             e.stopPropagation();
             setContextMenu({ x: e.clientX, y: e.clientY, rowIndex });
           }}
-          className="text-muted-foreground/40 hover:text-muted-foreground text-sm px-1"
+          className="rounded-md px-1.5 py-0.5 text-sm text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
           title="Row actions"
         >
           ⋯
@@ -326,8 +344,8 @@ export default function DataGrid({
   };
 
   const allCols: ColumnDef<RowData, unknown>[] = table.editable
-    ? [...(columnDefs as ColumnDef<RowData, unknown>[]), actionsCol]
-    : (columnDefs as ColumnDef<RowData, unknown>[]);
+    ? [rowNumberCol, ...(columnDefs as ColumnDef<RowData, unknown>[]), actionsCol]
+    : [rowNumberCol, ...(columnDefs as ColumnDef<RowData, unknown>[])];
 
   const tanSorts: SortingState = sorts.map((s) => ({ id: s.column, desc: s.desc }));
 
@@ -365,6 +383,8 @@ export default function DataGrid({
 
   const totalPages = Math.max(1, Math.ceil(data.page.total / page.limit));
   const currentPage = Math.floor(page.offset / page.limit) + 1;
+  const visibleRowCount = reactTable.getRowModel().rows.length;
+  const systemCols = new Set(["__rownum__", "__actions__"]);
 
   const removeSortColumn = useCallback(
     (col: string) => {
@@ -456,14 +476,14 @@ export default function DataGrid({
     <div className="flex flex-col h-full overflow-hidden">
       {/* No-PK / readonly banner */}
       {!table.editable && (
-        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-xs text-yellow-800 shrink-0">
+        <div className="shrink-0 border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-xs text-amber-950">
           {table.editable_reason === "no_primary_key"
-            ? "This table has no primary key — editing is disabled."
+            ? "This table has no primary key or unique constraint, so row edits are disabled."
             : table.editable_reason === "is_view"
-            ? "This is a view — editing is disabled."
-            : table.editable_reason === "is_matview"
-            ? "This is a materialized view — editing is disabled."
-            : `Editing is disabled: ${table.editable_reason ?? "unknown reason"}.`}
+              ? "This is a view — editing is disabled."
+              : table.editable_reason === "is_matview"
+                ? "This is a materialized view — editing is disabled."
+                : `Editing is disabled: ${table.editable_reason ?? "unknown reason"}.`}
         </div>
       )}
 
@@ -474,51 +494,91 @@ export default function DataGrid({
         onFiltersChange={onFiltersChange}
       />
 
-      {/* Sort chips */}
-      {sorts.length > 0 && (
-        <div className="px-2 py-1 border-b border-border shrink-0">
-          <SortChips sorts={sorts} onRemove={removeSortColumn} />
-        </div>
-      )}
+      <div className="shrink-0 border-b border-border bg-background/70 px-3 py-2 backdrop-blur-sm">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="gap-1 text-[11px]">
+              <ScanSearch className="size-3.5" />
+              {visibleRowCount.toLocaleString()} visible
+            </Badge>
+            <Badge variant="outline" className="gap-1 text-[11px]">
+              <SlidersHorizontal className="size-3.5" />
+              {filters.length} filter{filters.length === 1 ? "" : "s"}
+            </Badge>
+            <Badge variant="outline" className="gap-1 text-[11px]">
+              <ArrowUpDown className="size-3.5" />
+              {sorts.length} sort{sorts.length === 1 ? "" : "s"}
+            </Badge>
+            <span className="text-[11px] text-muted-foreground">
+              Enter edits, arrow keys move, Cmd/Ctrl+C copies.
+            </span>
+          </div>
 
-      {/* Add row button */}
-      {table.editable && (
-        <div className="px-2 py-1 border-b border-border shrink-0">
-          <Button size="sm" onClick={onAddRow}>
-            + Add row
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {filters.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => onFiltersChange([])}>
+                Clear filters
+              </Button>
+            )}
+            {sorts.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => onSortsChange([])}>
+                Reset sort
+              </Button>
+            )}
+            {table.editable && (
+              <Button size="sm" onClick={onAddRow} className="gap-1.5">
+                <Plus className="size-3.5" />
+                Add row
+              </Button>
+            )}
+          </div>
         </div>
-      )}
+
+        {sorts.length > 0 && (
+          <div className="mt-2">
+            <SortChips sorts={sorts} onRemove={removeSortColumn} />
+          </div>
+        )}
+      </div>
 
       {/* Table */}
       <div
-        className="flex-1 overflow-auto outline-none relative"
+        className="relative flex-1 overflow-auto outline-none"
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
       >
         {loading && (
-          <div className="absolute inset-0 bg-background/60 flex items-center justify-center z-10 pointer-events-none">
-            <span className="text-muted-foreground text-sm">Loading…</span>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center p-3">
+            <div className="rounded-full border border-border bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+              Refreshing rows…
+            </div>
           </div>
         )}
         <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 bg-muted z-10">
+          <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
             {reactTable.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const colName = header.id;
                   const sort = sorts.find((s) => s.column === colName);
                   const isActions = colName === "__actions__";
+                  const isRowNum = colName === "__rownum__";
                   return (
                     <th
                       key={header.id}
-                      className={`px-2 py-1.5 text-left font-medium text-muted-foreground border-b border-border whitespace-nowrap relative ${
-                        !isActions ? "cursor-pointer hover:bg-muted select-none" : ""
+                      className={`relative border-b border-border px-2 py-2 text-left font-medium whitespace-nowrap text-muted-foreground ${
+                        !systemCols.has(colName)
+                          ? "cursor-pointer select-none hover:bg-muted/80"
+                          : ""
                       }`}
-                      onClick={isActions ? undefined : (e) => handleHeaderClick(colName, e)}
-                      style={{ width: isActions ? 32 : header.getSize() }}
+                      onClick={
+                        systemCols.has(colName) ? undefined : (e) => handleHeaderClick(colName, e)
+                      }
+                      style={{ width: isActions ? 40 : isRowNum ? 56 : header.getSize() }}
                     >
-                      {isActions ? null : (
+                      {isActions ? null : isRowNum ? (
+                        <span className="block text-right">#</span>
+                      ) : (
                         <span className="flex items-center gap-1">
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           {sort ? (
@@ -532,13 +592,15 @@ export default function DataGrid({
                           )}
                         </span>
                       )}
-                      {!isActions && (
+                      {!systemCols.has(colName) && (
                         <div
                           onMouseDown={header.getResizeHandler()}
                           onTouchStart={header.getResizeHandler()}
                           onClick={(e) => e.stopPropagation()}
                           className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none ${
-                            header.column.getIsResizing() ? "bg-primary" : "hover:bg-muted-foreground/30"
+                            header.column.getIsResizing()
+                              ? "bg-primary"
+                              : "hover:bg-muted-foreground/30"
                           }`}
                         />
                       )}
@@ -551,8 +613,12 @@ export default function DataGrid({
           <tbody>
             {reactTable.getRowModel().rows.length === 0 ? (
               <tr>
-                <td colSpan={allCols.length} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                  <div>No rows match these filters.</div>
+                <td
+                  colSpan={allCols.length}
+                  className="px-4 py-12 text-center text-sm text-muted-foreground"
+                >
+                  <div className="font-medium text-foreground">No rows match this view.</div>
+                  <div className="mt-1">Adjust filters or refresh the table.</div>
                   {filters.length > 0 && (
                     <button
                       onClick={() => onFiltersChange([])}
@@ -565,23 +631,29 @@ export default function DataGrid({
               </tr>
             ) : (
               reactTable.getRowModel().rows.map((row) => (
-                <tr key={row.id} className="hover:bg-muted/50 border-b border-border group">
+                <tr key={row.id} className="group border-b border-border/80 hover:bg-muted/35">
                   {row.getVisibleCells().map((cell) => {
                     const isFocused =
-                      focusedCell?.rowIndex === row.index && focusedCell?.colName === cell.column.id;
+                      focusedCell?.rowIndex === row.index &&
+                      focusedCell?.colName === cell.column.id;
                     const isActionsCol = cell.column.id === "__actions__";
+                    const isRowNumCol = cell.column.id === "__rownum__";
                     return (
                       <td
                         key={cell.id}
-                        className={cn("px-2 py-1 overflow-hidden", isFocused && "ring-2 ring-ring ring-inset")}
+                        className={cn(
+                          "overflow-hidden px-2 py-1.5 align-top",
+                          isRowNumCol && "bg-muted/30",
+                          isFocused && "ring-2 ring-ring ring-inset"
+                        )}
                         style={{ width: cell.column.getSize() }}
                         onClick={() => {
-                          if (!isActionsCol) {
+                          if (!isActionsCol && !isRowNumCol) {
                             setFocusedCell({ rowIndex: row.index, colName: cell.column.id });
                           }
                         }}
                         onContextMenu={(e) => {
-                          if (!table.editable || isActionsCol) return;
+                          if (!table.editable || isActionsCol || isRowNumCol) return;
                           e.preventDefault();
                           setContextMenu({
                             x: e.clientX,
@@ -603,87 +675,97 @@ export default function DataGrid({
       </div>
 
       {/* Pagination */}
-      <div className="shrink-0 border-t border-border px-4 py-2 flex items-center gap-3 bg-card text-xs">
-        <button
-          onClick={() => onPageChange({ limit: page.limit, offset: 0 })}
-          disabled={page.offset === 0}
-          className="px-2 py-1 border border-border rounded disabled:opacity-40 hover:bg-muted/50"
-          title="First page"
-        >
-          &laquo;
-        </button>
-        <button
-          onClick={() =>
-            onPageChange({ limit: page.limit, offset: Math.max(0, page.offset - page.limit) })
-          }
-          disabled={page.offset === 0}
-          className="px-2 py-1 border border-border rounded disabled:opacity-40 hover:bg-muted/50"
-        >
-          Prev
-        </button>
-        <span className="text-muted-foreground flex items-center gap-1">
-          Page
-          <Input
-            type="number"
-            min={1}
-            max={totalPages}
-            value={currentPage}
-            onChange={(e) => {
-              const p = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
-              onPageChange({ limit: page.limit, offset: (p - 1) * page.limit });
-            }}
-            className="w-12 text-center text-xs h-7 px-1"
-          />
-          of {totalPages}
-        </span>
-        <button
-          onClick={() => onPageChange({ limit: page.limit, offset: page.offset + page.limit })}
-          disabled={currentPage >= totalPages}
-          className="px-2 py-1 border border-border rounded disabled:opacity-40 hover:bg-muted/50"
-        >
-          Next
-        </button>
-        <button
-          onClick={() =>
-            onPageChange({ limit: page.limit, offset: (totalPages - 1) * page.limit })
-          }
-          disabled={currentPage >= totalPages}
-          className="px-2 py-1 border border-border rounded disabled:opacity-40 hover:bg-muted/50"
-          title="Last page"
-        >
-          &raquo;
-        </button>
-        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
-          <span>Rows per page:</span>
-          <Select
-            value={String(page.limit)}
-            onValueChange={(v: string | null) => {
-              if (v) onPageChange({ limit: Number(v), offset: 0 });
-            }}
-          >
-            <SelectTrigger size="sm" className="h-7 w-auto text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZES.map((s) => (
-                <SelectItem key={s} value={String(s)}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span
-            className="text-muted-foreground"
-            title={
-              data.page.is_estimated
-                ? "Estimated from pg_class.reltuples — exact count skipped because the table is large."
-                : undefined
-            }
-          >
-            {data.page.is_estimated ? "~" : ""}
-            {data.page.total.toLocaleString()} total rows
+      <div className="shrink-0 border-t border-border bg-card/90 px-4 py-2 text-xs backdrop-blur-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onPageChange({ limit: page.limit, offset: 0 })}
+              disabled={page.offset === 0}
+              className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+              title="First page"
+            >
+              &laquo;
+            </button>
+            <button
+              onClick={() =>
+                onPageChange({ limit: page.limit, offset: Math.max(0, page.offset - page.limit) })
+              }
+              disabled={page.offset === 0}
+              className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span className="flex items-center gap-1 text-muted-foreground">
+              Page
+              <Input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={currentPage}
+                onChange={(e) => {
+                  const p = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
+                  onPageChange({ limit: page.limit, offset: (p - 1) * page.limit });
+                }}
+                className="h-7 w-12 px-1 text-center text-xs"
+              />
+              of {totalPages}
+            </span>
+            <button
+              onClick={() => onPageChange({ limit: page.limit, offset: page.offset + page.limit })}
+              disabled={currentPage >= totalPages}
+              className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+            >
+              Next
+            </button>
+            <button
+              onClick={() =>
+                onPageChange({ limit: page.limit, offset: (totalPages - 1) * page.limit })
+              }
+              disabled={currentPage >= totalPages}
+              className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+              title="Last page"
+            >
+              &raquo;
+            </button>
+          </div>
+
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span>Rows per page:</span>
+            <Select
+              value={String(page.limit)}
+              onValueChange={(v: string | null) => {
+                if (v) onPageChange({ limit: Number(v), offset: 0 });
+              }}
+            >
+              <SelectTrigger size="sm" className="h-7 w-auto text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZES.map((s) => (
+                  <SelectItem key={s} value={String(s)}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span
+              className="text-muted-foreground"
+              title={
+                data.page.is_estimated
+                  ? "Estimated from pg_class.reltuples — exact count skipped because the table is large."
+                  : undefined
+              }
+            >
+              {data.page.is_estimated ? "~" : ""}
+              {data.page.total.toLocaleString()} total rows
+            </span>
           </span>
-        </span>
+
+          <span className="text-muted-foreground lg:ml-auto">
+            Showing {visibleRowCount.toLocaleString()} row{visibleRowCount === 1 ? "" : "s"} on this
+            page
+          </span>
+        </div>
       </div>
 
       {/* Context menu */}
@@ -698,7 +780,10 @@ export default function DataGrid({
               <>
                 <button
                   onClick={() => {
-                    setEditingCell({ rowIndex: contextMenu.rowIndex, colName: contextMenu.colName! });
+                    setEditingCell({
+                      rowIndex: contextMenu.rowIndex,
+                      colName: contextMenu.colName!,
+                    });
                     setContextMenu(null);
                   }}
                   className="block w-full text-left px-4 py-1.5 text-xs text-foreground hover:bg-muted"

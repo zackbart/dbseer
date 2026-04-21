@@ -37,6 +37,12 @@ async function request<T>(
   if (confirmUnscoped !== undefined) {
     headers.set("X-Dbseer-Confirm-Unscoped", String(confirmUnscoped));
   }
+  if (isMutationMethod(fetchInit.method)) {
+    const csrf = getCookie("dbseer_csrf");
+    if (csrf) {
+      headers.set("X-Dbseer-CSRF", csrf);
+    }
+  }
 
   const response = await fetch(path, { ...fetchInit, headers });
 
@@ -65,11 +71,28 @@ async function request<T>(
   return response.json() as Promise<T>;
 }
 
+function isMutationMethod(method?: string): boolean {
+  if (!method) return false;
+  const upper = method.toUpperCase();
+  return upper === "POST" || upper === "PATCH" || upper === "PUT" || upper === "DELETE";
+}
+
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie ? document.cookie.split("; ") : [];
+  for (const cookie of cookies) {
+    const [key, ...rest] = cookie.split("=");
+    if (key === name) {
+      return decodeURIComponent(rest.join("="));
+    }
+  }
+  return null;
+}
+
 export const api = {
   discover: () => request<DiscoverInfo>("/api/discover"),
 
-  schema: (refresh = false) =>
-    request<Schema>(`/api/schema${refresh ? "?refresh=1" : ""}`),
+  schema: (refresh = false) => request<Schema>(`/api/schema${refresh ? "?refresh=1" : ""}`),
 
   browse: (
     schema: string,
@@ -80,11 +103,7 @@ export const api = {
       `/api/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows?${encodeBrowseParams(opts)}`
     ),
 
-  insertRow: (
-    schema: string,
-    table: string,
-    values: Record<string, WireCell>
-  ) =>
+  insertRow: (schema: string, table: string, values: Record<string, WireCell>) =>
     request<WireCell[]>(
       `/api/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`,
       {
@@ -117,32 +136,25 @@ export const api = {
     where: Record<string, WireCell>,
     confirmUnscoped?: number
   ) =>
-    request<void>(
-      `/api/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`,
-      {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ where }),
-        confirmUnscoped,
-      }
-    ),
+    request<void>(`/api/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ where }),
+      confirmUnscoped,
+    }),
 
   fkTarget: (schema: string, table: string, col: string, val: WireCell) =>
     request<FKTarget>(
       `/api/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/fk-target?col=${encodeURIComponent(col)}&val=${encodeURIComponent(JSON.stringify(val.v))}`
     ),
 
-  history: (
-    opts: { limit?: number; since?: string; table?: string } = {}
-  ) => {
+  history: (opts: { limit?: number; since?: string; table?: string } = {}) => {
     const params = new URLSearchParams();
     if (opts.limit !== undefined) params.set("limit", String(opts.limit));
     if (opts.since) params.set("since", opts.since);
     if (opts.table) params.set("table", opts.table);
     const qs = params.toString();
-    return request<{ entries: HistoryEntry[] }>(
-      `/api/history${qs ? "?" + qs : ""}`
-    );
+    return request<{ entries: HistoryEntry[] }>(`/api/history${qs ? "?" + qs : ""}`);
   },
 };
 

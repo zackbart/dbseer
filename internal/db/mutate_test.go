@@ -1,16 +1,33 @@
 package db
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zackbart/dbseer/internal/wire"
 )
+
+func textCell(v string) wire.Cell {
+	b, _ := json.Marshal(v)
+	return wire.Cell{V: b, T: wire.HintText}
+}
+
+func intCell(v int64) wire.Cell {
+	b, _ := json.Marshal(v)
+	return wire.Cell{V: b, T: wire.HintInt}
+}
+
+func nullCell() wire.Cell {
+	return wire.Cell{V: json.RawMessage("null")}
+}
 
 func mutateTestTable() Table {
 	return Table{
-		Schema:   "public",
-		Name:     "users",
-		Kind:     "r",
-		Editable: true,
+		Schema:     "public",
+		Name:       "users",
+		Kind:       "r",
+		Editable:   true,
 		PrimaryKey: []string{"id"},
 		Columns: []Column{
 			{Name: "id", Ordinal: 1, TypeName: "int4", Editor: "int", Nullable: false},
@@ -22,10 +39,10 @@ func mutateTestTable() Table {
 
 func multiPKTable() Table {
 	return Table{
-		Schema:   "public",
-		Name:     "memberships",
-		Kind:     "r",
-		Editable: true,
+		Schema:     "public",
+		Name:       "memberships",
+		Kind:       "r",
+		Editable:   true,
 		PrimaryKey: []string{"user_id", "org_id"},
 		Columns: []Column{
 			{Name: "user_id", Ordinal: 1, TypeName: "int4", Editor: "int", Nullable: false},
@@ -37,11 +54,11 @@ func multiPKTable() Table {
 
 func uniqueOnlyTable() Table {
 	return Table{
-		Schema:   "public",
-		Name:     "nopk",
-		Kind:     "r",
-		Editable: true,
-		PrimaryKey: nil,
+		Schema:            "public",
+		Name:              "nopk",
+		Kind:              "r",
+		Editable:          true,
+		PrimaryKey:        nil,
 		UniqueConstraints: [][]string{{"email"}},
 		Columns: []Column{
 			{Name: "email", Ordinal: 1, TypeName: "text", Editor: "text", Nullable: false},
@@ -56,9 +73,9 @@ func TestBuildInsertSQL_Basic(t *testing.T) {
 	req := InsertRequest{
 		Schema: "public",
 		Table:  "users",
-		Values: map[string]string{
-			"email": "alice@example.com",
-			"name":  "Alice",
+		Values: map[string]wire.Cell{
+			"email": textCell("alice@example.com"),
+			"name":  textCell("Alice"),
 		},
 	}
 	sql, args, err := buildInsertSQL(req, mutateTestTable())
@@ -90,7 +107,7 @@ func TestBuildInsertSQL_DefaultValues(t *testing.T) {
 	req := InsertRequest{
 		Schema: "public",
 		Table:  "users",
-		Values: map[string]string{},
+		Values: map[string]wire.Cell{},
 	}
 	sql, args, err := buildInsertSQL(req, mutateTestTable())
 	if err != nil {
@@ -110,8 +127,8 @@ func TestBuildUpdateSQL_Basic(t *testing.T) {
 	req := UpdateRequest{
 		Schema:  "public",
 		Table:   "users",
-		Where:   map[string]string{"id": "42"},
-		Values:  map[string]string{"email": "new@example.com"},
+		Where:   map[string]wire.Cell{"id": intCell(42)},
+		Values:  map[string]wire.Cell{"email": textCell("new@example.com")},
 		Confirm: 0,
 	}
 	sql, args, err := buildUpdateSQL(req, mutateTestTable())
@@ -143,8 +160,8 @@ func TestBuildUpdateSQL_PKInWhere(t *testing.T) {
 	req := UpdateRequest{
 		Schema: "public",
 		Table:  "users",
-		Where:  map[string]string{"id": "1"},
-		Values: map[string]string{"name": "Bob"},
+		Where:  map[string]wire.Cell{"id": intCell(1)},
+		Values: map[string]wire.Cell{"name": textCell("Bob")},
 	}
 	sql, _, err := buildUpdateSQL(req, mutateTestTable())
 	if err != nil {
@@ -165,8 +182,8 @@ func TestBuildUpdateSQL_NoColumns(t *testing.T) {
 	req := UpdateRequest{
 		Schema: "public",
 		Table:  "users",
-		Where:  map[string]string{"id": "1"},
-		Values: map[string]string{},
+		Where:  map[string]wire.Cell{"id": intCell(1)},
+		Values: map[string]wire.Cell{},
 	}
 	_, _, err := buildUpdateSQL(req, mutateTestTable())
 	if err == nil {
@@ -180,7 +197,7 @@ func TestBuildDeleteSQL_Basic(t *testing.T) {
 	req := DeleteRequest{
 		Schema: "public",
 		Table:  "users",
-		Where:  map[string]string{"id": "42"},
+		Where:  map[string]wire.Cell{"id": intCell(42)},
 	}
 	sql, args, err := buildDeleteSQL(req, mutateTestTable())
 	if err != nil {
@@ -207,7 +224,7 @@ func TestBuildDeleteSQL_NoWhere(t *testing.T) {
 	req := DeleteRequest{
 		Schema: "public",
 		Table:  "users",
-		Where:  map[string]string{},
+		Where:  map[string]wire.Cell{},
 	}
 	_, _, err := buildDeleteSQL(req, mutateTestTable())
 	if err == nil {
@@ -219,7 +236,7 @@ func TestBuildDeleteSQL_NoWhere(t *testing.T) {
 
 func TestValidateWhereKeys_PKFull(t *testing.T) {
 	tbl := mutateTestTable()
-	err := validateWhereKeys(map[string]string{"id": "1"}, tbl)
+	err := validateWhereKeys(map[string]wire.Cell{"id": intCell(1)}, tbl)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -228,7 +245,7 @@ func TestValidateWhereKeys_PKFull(t *testing.T) {
 func TestValidateWhereKeys_PKPartial(t *testing.T) {
 	tbl := multiPKTable()
 	// Only user_id provided, missing org_id.
-	err := validateWhereKeys(map[string]string{"user_id": "1"}, tbl)
+	err := validateWhereKeys(map[string]wire.Cell{"user_id": intCell(1)}, tbl)
 	if err == nil {
 		t.Fatal("expected error for partial PK WHERE, got nil")
 	}
@@ -236,7 +253,7 @@ func TestValidateWhereKeys_PKPartial(t *testing.T) {
 
 func TestValidateWhereKeys_PKFull_Multi(t *testing.T) {
 	tbl := multiPKTable()
-	err := validateWhereKeys(map[string]string{"user_id": "1", "org_id": "2"}, tbl)
+	err := validateWhereKeys(map[string]wire.Cell{"user_id": intCell(1), "org_id": intCell(2)}, tbl)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -244,7 +261,7 @@ func TestValidateWhereKeys_PKFull_Multi(t *testing.T) {
 
 func TestValidateWhereKeys_UniqueConstraint(t *testing.T) {
 	tbl := uniqueOnlyTable()
-	err := validateWhereKeys(map[string]string{"email": "alice@example.com"}, tbl)
+	err := validateWhereKeys(map[string]wire.Cell{"email": textCell("alice@example.com")}, tbl)
 	if err != nil {
 		t.Errorf("expected no error when full unique constraint provided, got: %v", err)
 	}
@@ -252,15 +269,62 @@ func TestValidateWhereKeys_UniqueConstraint(t *testing.T) {
 
 func TestValidateWhereKeys_NoPKAndNoUC(t *testing.T) {
 	tbl := Table{
-		Schema:   "public",
-		Name:     "nopk",
-		Kind:     "r",
-		Editable: false,
+		Schema:         "public",
+		Name:           "nopk",
+		Kind:           "r",
+		Editable:       false,
 		EditableReason: "no_primary_key",
 	}
-	err := validateWhereKeys(map[string]string{"col": "val"}, tbl)
+	err := validateWhereKeys(map[string]wire.Cell{"col": textCell("val")}, tbl)
 	if err == nil {
 		t.Fatal("expected error for table with no PK and no UC, got nil")
+	}
+}
+
+func TestBuildUpdateSQL_NullAssignmentUsesNULLLiteral(t *testing.T) {
+	req := UpdateRequest{
+		Schema: "public",
+		Table:  "users",
+		Where:  map[string]wire.Cell{"id": intCell(1)},
+		Values: map[string]wire.Cell{"name": nullCell()},
+	}
+
+	sql, args, err := buildUpdateSQL(req, mutateTestTable())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(sql, `"name" = NULL`) {
+		t.Fatalf("expected NULL assignment in SQL, got %s", sql)
+	}
+	if len(args) != 1 {
+		t.Fatalf("expected only WHERE arg, got %d", len(args))
+	}
+}
+
+func TestBuildDeleteSQL_NullWhereUsesIsNull(t *testing.T) {
+	tbl := uniqueOnlyTable()
+	req := DeleteRequest{
+		Schema: "public",
+		Table:  "nopk",
+		Where:  map[string]wire.Cell{"name": nullCell()},
+	}
+
+	sql, _, err := buildDeleteSQL(req, tbl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(sql, `"name" IS NULL`) {
+		t.Fatalf("expected IS NULL predicate, got %s", sql)
+	}
+}
+
+func TestParseMutateValue_PreservesEmptyString(t *testing.T) {
+	v, err := parseMutateValue(textCell(""), mutateTestTable().Columns[1])
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, ok := v.(string); !ok || got != "" {
+		t.Fatalf("expected empty string, got %#v", v)
 	}
 }
 

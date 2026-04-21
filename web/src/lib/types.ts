@@ -1,15 +1,35 @@
 // Wire cell envelope — every row cell is wrapped in one of these.
 export type TypeHint =
-  | "text" | "int" | "float" | "numeric" | "bool"
-  | "date" | "timestamp" | "timestamptz"
-  | "uuid" | "jsonb" | "json" | "bytea" | "interval"
-  | "enum" | "array"
-  | "tsvector" | "xml" | "oid" | "bit" | "inet" | "cidr" | "macaddr"
-  | "range" | "money" | "geometry" | "unknown"
+  | "text"
+  | "int"
+  | "float"
+  | "numeric"
+  | "bool"
+  | "date"
+  | "timestamp"
+  | "timestamptz"
+  | "uuid"
+  | "jsonb"
+  | "json"
+  | "bytea"
+  | "interval"
+  | "enum"
+  | "array"
+  | "tsvector"
+  | "xml"
+  | "oid"
+  | "bit"
+  | "inet"
+  | "cidr"
+  | "macaddr"
+  | "range"
+  | "money"
+  | "geometry"
+  | "unknown"
   | "";
 
 export interface WireCell {
-  v: unknown;  // JSON-representable value, or null
+  v: unknown; // JSON-representable value, or null
   t: TypeHint;
 }
 
@@ -25,6 +45,7 @@ export interface Table {
   kind: "r" | "v" | "m" | "p";
   editable: boolean;
   editable_reason: string | null;
+  edit_key: string[];
   estimated_rows: number;
   columns: Column[];
   primary_key: string[];
@@ -76,9 +97,20 @@ export interface DiscoverInfo {
 
 // Filter + sort state
 export type FilterOp =
-  | "contains" | "equals" | "starts_with" | "ends_with"
-  | "eq" | "ne" | "lt" | "lte" | "gt" | "gte"
-  | "is_true" | "is_false" | "is_null" | "is_not_null"
+  | "contains"
+  | "equals"
+  | "starts_with"
+  | "ends_with"
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "is_true"
+  | "is_false"
+  | "is_null"
+  | "is_not_null"
   | "in";
 
 export interface Filter {

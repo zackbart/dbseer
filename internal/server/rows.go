@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -244,8 +245,8 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 
 	var body insertBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "invalid_request", "invalid JSON body", nil)
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeError(w, 400, "invalid_request", err.Error(), nil)
 		return
 	}
 
@@ -261,12 +262,10 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	values := cellMapToStringMap(body.Values)
-
 	req := db.InsertRequest{
 		Schema: schema,
 		Table:  table,
-		Values: values,
+		Values: body.Values,
 	}
 
 	row, err := db.Insert(r.Context(), s.cfg.Pool, tableMeta, req)
@@ -283,7 +282,6 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Cache.Invalidate()
 	appendAuditLog(s.cfg.AuditLog, "INSERT", schema+"."+table, 1, req)
 
 	writeJSON(w, 201, row)
@@ -301,8 +299,16 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 
 	var body updateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "invalid_request", "invalid JSON body", nil)
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeError(w, 400, "invalid_request", err.Error(), nil)
+		return
+	}
+	if len(body.Where) == 0 {
+		writeError(w, 400, "invalid_request", "update requires a where clause", nil)
+		return
+	}
+	if len(body.Values) == 0 {
+		writeError(w, 400, "invalid_request", "update requires at least one value", nil)
 		return
 	}
 
@@ -332,8 +338,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	req := db.UpdateRequest{
 		Schema:  schema,
 		Table:   table,
-		Where:   cellMapToStringMap(body.Where),
-		Values:  cellMapToStringMap(body.Values),
+		Where:   body.Where,
+		Values:  body.Values,
 		Confirm: confirm,
 	}
 
@@ -358,7 +364,6 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Cache.Invalidate()
 	appendAuditLog(s.cfg.AuditLog, "UPDATE", schema+"."+table, int64(len(rows)), req)
 
 	writeJSON(w, 200, rows)
@@ -375,8 +380,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 
 	var body deleteBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "invalid_request", "invalid JSON body", nil)
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeError(w, 400, "invalid_request", err.Error(), nil)
+		return
+	}
+	if len(body.Where) == 0 {
+		writeError(w, 400, "invalid_request", "delete requires a where clause", nil)
 		return
 	}
 
@@ -406,7 +415,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	req := db.DeleteRequest{
 		Schema:  schema,
 		Table:   table,
-		Where:   cellMapToStringMap(body.Where),
+		Where:   body.Where,
 		Confirm: confirm,
 	}
 
@@ -431,46 +440,25 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Cache.Invalidate()
 	appendAuditLog(s.cfg.AuditLog, "DELETE", schema+"."+table, int64(len(body.Where)), req)
 
 	w.WriteHeader(204)
 }
 
-// cellMapToStringMap converts a map[string]wire.Cell to map[string]string
-// by stringifying the V field of each cell.
-func cellMapToStringMap(cells map[string]wire.Cell) map[string]string {
-	result := make(map[string]string, len(cells))
-	for k, cell := range cells {
-		result[k] = cellValueToString(cell.V)
+func decodeJSONBody(r *http.Request, dst any) error {
+	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+		return fmt.Errorf("Content-Type must be application/json")
 	}
-	return result
-}
 
-// cellValueToString converts a wire.Cell V (json.RawMessage) to a string.
-func cellValueToString(v json.RawMessage) string {
-	if len(v) == 0 || string(v) == "null" {
-		return "null"
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("invalid JSON body")
 	}
-	// Unmarshal to any, then stringify.
-	var raw any
-	if err := json.Unmarshal(v, &raw); err != nil {
-		return string(v)
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body must contain exactly one JSON object")
 	}
-	switch val := raw.(type) {
-	case string:
-		return val
-	case float64:
-		// Avoid scientific notation for integers.
-		if val == float64(int64(val)) {
-			return strconv.FormatInt(int64(val), 10)
-		}
-		return strconv.FormatFloat(val, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(val)
-	default:
-		return fmt.Sprintf("%v", val)
-	}
+	return nil
 }
 
 // findTable looks up a table by schema+name in the cached schema.

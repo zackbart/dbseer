@@ -8,16 +8,17 @@ import (
 
 // schemaTableJSON is the JSON shape for a table in GET /api/schema.
 type schemaTableJSON struct {
-	Schema            string              `json:"schema"`
-	Name              string              `json:"name"`
-	Kind              string              `json:"kind"`
-	Editable          bool                `json:"editable"`
-	EditableReason    *string             `json:"editable_reason"`
-	EstimatedRows     int64               `json:"estimated_rows"`
-	Columns           []schemaColumnJSON  `json:"columns"`
-	PrimaryKey        []string            `json:"primary_key"`
-	UniqueConstraints [][]string          `json:"unique_constraints"`
-	ForeignKeys       []schemaFKJSON      `json:"foreign_keys"`
+	Schema            string             `json:"schema"`
+	Name              string             `json:"name"`
+	Kind              string             `json:"kind"`
+	Editable          bool               `json:"editable"`
+	EditableReason    *string            `json:"editable_reason"`
+	EditKey           []string           `json:"edit_key"`
+	EstimatedRows     int64              `json:"estimated_rows"`
+	Columns           []schemaColumnJSON `json:"columns"`
+	PrimaryKey        []string           `json:"primary_key"`
+	UniqueConstraints [][]string         `json:"unique_constraints"`
+	ForeignKeys       []schemaFKJSON     `json:"foreign_keys"`
 }
 
 // schemaColumnJSON is the JSON shape for a column in the schema response.
@@ -141,6 +142,7 @@ func buildTableJSON(t db.Table) schemaTableJSON {
 	if uc == nil {
 		uc = [][]string{}
 	}
+	editKey := editableKeyForTable(t)
 
 	return schemaTableJSON{
 		Schema:            t.Schema,
@@ -148,10 +150,21 @@ func buildTableJSON(t db.Table) schemaTableJSON {
 		Kind:              t.Kind,
 		Editable:          t.Editable,
 		EditableReason:    editableReason,
+		EditKey:           editKey,
 		EstimatedRows:     t.EstimatedRows,
 		Columns:           cols,
 		PrimaryKey:        pk,
 		UniqueConstraints: uc,
 		ForeignKeys:       fks,
 	}
+}
+
+func editableKeyForTable(t db.Table) []string {
+	if len(t.PrimaryKey) > 0 {
+		return append([]string(nil), t.PrimaryKey...)
+	}
+	if len(t.UniqueConstraints) > 0 {
+		return append([]string(nil), t.UniqueConstraints[0]...)
+	}
+	return []string{}
 }

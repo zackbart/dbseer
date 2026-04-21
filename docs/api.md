@@ -4,7 +4,9 @@
 **Base path:** `/api`
 **Status:** Authoritative contract — source of truth for backend handlers and frontend client.
 
-All responses are JSON. Timestamps are RFC 3339. All requests and responses are localhost-only.
+All responses are JSON. Timestamps are RFC 3339.
+
+State-changing row endpoints (`POST`, `PATCH`, `DELETE` under `/api/tables/.../rows`) require `Content-Type: application/json`, reject unknown JSON fields, and reject cross-site browser requests unless the request origin matches the dbseer host. When dbseer is bound to a non-local address with HTTP auth enabled, those same endpoints also require a matching CSRF token via `X-Dbseer-CSRF`.
 
 ## Wire cell envelope
 
@@ -63,13 +65,15 @@ All error responses have this shape:
 
 HTTP status aligns with the error class:
 - `400` — validation errors (bad query string, malformed body)
-- `401`/`403` — not used in v0.1 (no auth)
+- `401` — HTTP auth required for a protected server
+- `403` — CSRF / same-origin rejection
 - `404` — table/column/row not found
 - `409` — `unscoped_mutation` (see rows endpoints)
 - `500` — database or internal error
 
 Error codes:
 - `invalid_request` — bad params or body
+- `invalid_request` — also used for auth / CSRF failures
 - `not_found` — table or row missing
 - `unscoped_mutation` — mutation would affect more than one row; requires confirmation header
 - `table_readonly` — edit attempted on a view, materialized view, or no-PK table
@@ -114,6 +118,7 @@ Returns the full introspected schema. Cached server-side for 30 seconds; bypass 
       "kind": "r",
       "editable": true,
       "editable_reason": null,
+      "edit_key": ["id"],
       "estimated_rows": 1234,
       "columns": [
         {
@@ -153,6 +158,7 @@ Returns the full introspected schema. Cached server-side for 30 seconds; bypass 
 
 `kind` is `r` (ordinary table), `v` (view), `m` (materialized view), `p` (partitioned table).
 `editable` is `false` for views, matviews, and tables with no primary key or unique constraint. `editable_reason` is a short string (e.g., `"no_primary_key"`, `"is_view"`) when `editable` is false.
+`edit_key` is the canonical key dbseer uses for row edits and deletes: the primary key when present, otherwise the first unique constraint.
 `editor` maps to a type hint (same vocabulary as the wire envelope) so the frontend can pre-pick an input widget without inspecting each cell.
 
 ### `GET /api/tables/{schema}/{table}/rows`
@@ -207,6 +213,8 @@ Insert a new row.
 
 Omitted columns take their database default. The frontend must not send identity/generated columns.
 
+The request must be same-origin in the browser and use `Content-Type: application/json`.
+
 **Response:** `201 Created`, body is the inserted row in the same shape as a row element in `GET .../rows`.
 
 ### `PATCH /api/tables/{schema}/{table}/rows`
@@ -220,6 +228,8 @@ Update row(s) matching a `where` clause. The `where` clause MUST name every prim
   "values": { "email": {"v": "new@example.com", "t": "text"} }
 }
 ```
+
+The request must be same-origin in the browser and use `Content-Type: application/json`.
 
 **Unscoped guard:** The handler runs the update inside a transaction with a row-count check. If the number of affected rows is `> 1`, the transaction is rolled back and the response is:
 
@@ -246,6 +256,8 @@ Delete row(s) matching a `where` clause. Same unscoped-mutation guard as PATCH.
 ```json
 { "where": { "id": {"v": "...", "t": "uuid"} } }
 ```
+
+The request must be same-origin in the browser and use `Content-Type: application/json`.
 
 **Response (success):** `204 No Content`.
 

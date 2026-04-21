@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,23 +24,23 @@ func (e *UnscopedError) Error() string {
 type InsertRequest struct {
 	Schema string
 	Table  string
-	Values map[string]string // column → raw string value
+	Values map[string]wire.Cell // column → typed wire cell
 }
 
 // UpdateRequest holds parameters for updating row(s).
 type UpdateRequest struct {
 	Schema  string
 	Table   string
-	Where   map[string]string // column → value (must match PK or unique set)
-	Values  map[string]string // columns to update
-	Confirm int64             // 0 = no confirmation; > 0 = expected affected row count
+	Where   map[string]wire.Cell // column → value (must match PK or unique set)
+	Values  map[string]wire.Cell // columns to update
+	Confirm int64                // 0 = no confirmation; > 0 = expected affected row count
 }
 
 // DeleteRequest holds parameters for deleting row(s).
 type DeleteRequest struct {
 	Schema  string
 	Table   string
-	Where   map[string]string
+	Where   map[string]wire.Cell
 	Confirm int64
 }
 
@@ -109,6 +110,12 @@ func Update(ctx context.Context, pool *Pool, tableMeta Table, req UpdateRequest)
 	if err := validateWhereKeys(req.Where, tableMeta); err != nil {
 		return nil, err
 	}
+	if err := validateMutationColumns(req.Values, tableMeta, false); err != nil {
+		return nil, err
+	}
+	if err := validateMutationColumns(req.Where, tableMeta, true); err != nil {
+		return nil, err
+	}
 
 	sql, args, err := buildUpdateSQL(req, tableMeta)
 	if err != nil {
@@ -130,6 +137,9 @@ func Delete(ctx context.Context, pool *Pool, tableMeta Table, req DeleteRequest)
 	if err := validateWhereKeys(req.Where, tableMeta); err != nil {
 		return 0, err
 	}
+	if err := validateMutationColumns(req.Where, tableMeta, true); err != nil {
+		return 0, err
+	}
 
 	sql, args, err := buildDeleteSQL(req, tableMeta)
 	if err != nil {
@@ -146,7 +156,7 @@ func Delete(ctx context.Context, pool *Pool, tableMeta Table, req DeleteRequest)
 // validateWhereKeys checks that the WHERE map covers all PK columns (if a PK
 // exists) or all columns of at least one unique constraint. Partial keys are
 // rejected to prevent unintended multi-row mutations.
-func validateWhereKeys(where map[string]string, tableMeta Table) error {
+func validateWhereKeys(where map[string]wire.Cell, tableMeta Table) error {
 	if len(tableMeta.PrimaryKey) > 0 {
 		for _, pk := range tableMeta.PrimaryKey {
 			if _, ok := where[pk]; !ok {
@@ -171,6 +181,25 @@ func validateWhereKeys(where map[string]string, tableMeta Table) error {
 	}
 
 	return fmt.Errorf("WHERE clause must cover all primary key or unique constraint columns")
+}
+
+func validateMutationColumns(cells map[string]wire.Cell, tableMeta Table, allowGenerated bool) error {
+	colMap := map[string]Column{}
+	for _, col := range tableMeta.Columns {
+		colMap[col.Name] = col
+	}
+
+	for name := range cells {
+		col, ok := colMap[name]
+		if !ok {
+			return fmt.Errorf("unknown column %q", name)
+		}
+		if !allowGenerated && col.IsGenerated {
+			return fmt.Errorf("column %q is generated and cannot be edited", name)
+		}
+	}
+
+	return nil
 }
 
 // runMutationWithGuard executes a mutation SQL (UPDATE/DELETE RETURNING *)
@@ -271,6 +300,18 @@ func buildInsertSQL(req InsertRequest, tableMeta Table) (string, []any, error) {
 		if col.IsGenerated {
 			continue // Cannot insert into generated columns.
 		}
+		if isNullCell(rawVal) {
+			if !col.Nullable {
+				return "", nil, fmt.Errorf("column %q is not nullable", col.Name)
+			}
+			qcol, err := Quote(col.Name)
+			if err != nil {
+				return "", nil, err
+			}
+			colNames = append(colNames, qcol)
+			placeholders = append(placeholders, "NULL")
+			continue
+		}
 		v, err := parseMutateValue(rawVal, col)
 		if err != nil {
 			return "", nil, err
@@ -323,11 +364,18 @@ func buildUpdateSQL(req UpdateRequest, tableMeta Table) (string, []any, error) {
 		if col.IsGenerated {
 			continue
 		}
-		v, err := parseMutateValue(rawVal, col)
+		qcol, err := Quote(col.Name)
 		if err != nil {
 			return "", nil, err
 		}
-		qcol, err := Quote(col.Name)
+		if isNullCell(rawVal) {
+			if !col.Nullable {
+				return "", nil, fmt.Errorf("column %q is not nullable", col.Name)
+			}
+			setParts = append(setParts, fmt.Sprintf("%s = NULL", qcol))
+			continue
+		}
+		v, err := parseMutateValue(rawVal, col)
 		if err != nil {
 			return "", nil, err
 		}
@@ -346,11 +394,15 @@ func buildUpdateSQL(req UpdateRequest, tableMeta Table) (string, []any, error) {
 		if !provided {
 			continue
 		}
-		v, err := parseMutateValue(rawVal, col)
+		qcol, err := Quote(col.Name)
 		if err != nil {
 			return "", nil, err
 		}
-		qcol, err := Quote(col.Name)
+		if isNullCell(rawVal) {
+			whereParts = append(whereParts, fmt.Sprintf("%s IS NULL", qcol))
+			continue
+		}
+		v, err := parseMutateValue(rawVal, col)
 		if err != nil {
 			return "", nil, err
 		}
@@ -391,11 +443,15 @@ func buildDeleteSQL(req DeleteRequest, tableMeta Table) (string, []any, error) {
 		if !provided {
 			continue
 		}
-		v, err := parseMutateValue(rawVal, col)
+		qcol, err := Quote(col.Name)
 		if err != nil {
 			return "", nil, err
 		}
-		qcol, err := Quote(col.Name)
+		if isNullCell(rawVal) {
+			whereParts = append(whereParts, fmt.Sprintf("%s IS NULL", qcol))
+			continue
+		}
+		v, err := parseMutateValue(rawVal, col)
 		if err != nil {
 			return "", nil, err
 		}
@@ -415,22 +471,51 @@ func buildDeleteSQL(req DeleteRequest, tableMeta Table) (string, []any, error) {
 	return sql, args, nil
 }
 
-// parseMutateValue coerces a raw string mutation value to the column's type.
-// For now it passes the string directly to pgx which handles text casting.
-// Structured types (uuid, timestamps) pass through as strings too; Postgres
-// will cast via the parameterized query mechanism.
-func parseMutateValue(raw string, col Column) (any, error) {
-	// Pass null sentinel.
-	if raw == "" || raw == "null" {
-		if col.Nullable {
-			return nil, nil
+func isNullCell(cell wire.Cell) bool {
+	return len(cell.V) == 0 || string(cell.V) == "null"
+}
+
+// parseMutateValue coerces a wire cell into a value that pgx can send as a
+// bound parameter while preserving empty strings and JSON content.
+func parseMutateValue(cell wire.Cell, col Column) (any, error) {
+	if isNullCell(cell) {
+		if !col.Nullable {
+			return nil, fmt.Errorf("column %q is not nullable", col.Name)
 		}
-		// Non-nullable: pass empty string and let Postgres error if invalid.
-		if raw == "null" {
-			return nil, nil
-		}
+		return nil, nil
 	}
-	// For all types, pass the raw string — pgx will let Postgres cast it.
-	// This matches what the wire layer expects (raw string values from the client).
-	return raw, nil
+
+	switch col.Editor {
+	case string(wire.HintInt):
+		var n int64
+		if err := json.Unmarshal(cell.V, &n); err != nil {
+			return nil, fmt.Errorf("invalid integer for column %q", col.Name)
+		}
+		return n, nil
+	case string(wire.HintFloat):
+		var n float64
+		if err := json.Unmarshal(cell.V, &n); err != nil {
+			return nil, fmt.Errorf("invalid float for column %q", col.Name)
+		}
+		return n, nil
+	case string(wire.HintBool):
+		var b bool
+		if err := json.Unmarshal(cell.V, &b); err != nil {
+			return nil, fmt.Errorf("invalid boolean for column %q", col.Name)
+		}
+		return b, nil
+	case string(wire.HintJSON), string(wire.HintJSONB):
+		return json.RawMessage(cell.V), nil
+	default:
+		var s string
+		if err := json.Unmarshal(cell.V, &s); err == nil {
+			return s, nil
+		}
+
+		var raw any
+		if err := json.Unmarshal(cell.V, &raw); err != nil {
+			return nil, fmt.Errorf("invalid value for column %q", col.Name)
+		}
+		return fmt.Sprintf("%v", raw), nil
+	}
 }

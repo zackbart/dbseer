@@ -5,7 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans:
+    "SF Pro Text", "Segoe UI Variable", "Segoe UI", "Helvetica Neue", "Arial Nova", ui-sans-serif,
+    sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -39,31 +41,62 @@ body,
 
 @layer base {
   :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0.014 264.531);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0.014 264.531);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0.014 264.531);
-    --primary: oklch(0.546 0.245 262.881);
-    --primary-foreground: oklch(1 0 0);
-    --secondary: oklch(0.968 0.007 264.531);
-    --secondary-foreground: oklch(0.145 0.014 264.531);
-    --muted: oklch(0.968 0.007 264.531);
-    --muted-foreground: oklch(0.554 0.022 264.531);
-    --accent: oklch(0.968 0.007 264.531);
-    --accent-foreground: oklch(0.145 0.014 264.531);
-    --destructive: oklch(0.577 0.245 27.325);
+    --background: oklch(0.986 0.004 95);
+    --foreground: oklch(0.24 0.016 237);
+    --card: oklch(0.998 0.002 95);
+    --card-foreground: oklch(0.24 0.016 237);
+    --popover: oklch(0.998 0.002 95);
+    --popover-foreground: oklch(0.24 0.016 237);
+    --primary: oklch(0.55 0.12 210);
+    --primary-foreground: oklch(0.99 0.004 95);
+    --secondary: oklch(0.96 0.008 95);
+    --secondary-foreground: oklch(0.24 0.016 237);
+    --muted: oklch(0.954 0.008 95);
+    --muted-foreground: oklch(0.52 0.014 237);
+    --accent: oklch(0.935 0.02 194);
+    --accent-foreground: oklch(0.24 0.016 237);
+    --destructive: oklch(0.61 0.19 25);
     --destructive-foreground: oklch(1 0 0);
-    --border: oklch(0.929 0.006 264.531);
-    --input: oklch(0.929 0.006 264.531);
-    --ring: oklch(0.546 0.245 262.881);
-    --radius: 0.375rem;
+    --border: oklch(0.905 0.01 95);
+    --input: oklch(0.905 0.01 95);
+    --ring: oklch(0.55 0.12 210);
+    --radius: 0.5rem;
   }
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+    background-image:
+      radial-gradient(
+        circle at top left,
+        color-mix(in srgb, var(--accent) 18%, transparent) 0,
+        transparent 28rem
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--background) 88%, white) 0%,
+        var(--background) 22rem
+      );
+    background-attachment: fixed;
   }
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 18%, white);
+}
+
+.dbseer-shell {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--background) 90%, white) 0%, transparent 16rem),
+    var(--background);
+}
+
+.dbseer-hero {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, white) 0%, transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--card) 94%, white) 0%, var(--card) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 82%, transparent),
+    0 8px 24px color-mix(in srgb, black 5%, transparent);
 }

@@ -15,6 +15,14 @@ import (
 	"github.com/zackbart/dbseer/internal/ui"
 )
 
+const csrfCookieName = "dbseer_csrf"
+
+type AuthConfig struct {
+	Username  string
+	Password  string
+	CSRFToken string
+}
+
 // Config holds the dependencies and settings for the HTTP server.
 type Config struct {
 	// Pool is the Postgres connection pool.
@@ -27,6 +35,8 @@ type Config struct {
 	AuditLog *safety.Logger
 	// Readonly mirrors Pool.Readonly(); cached here so middleware doesn't need the pool.
 	Readonly bool
+	// Auth, when non-nil, enables HTTP basic auth and CSRF protection.
+	Auth *AuthConfig
 	// Version is injected for /api response headers.
 	Version string
 	// Logger is the structured logger used for request and error logging.
@@ -54,6 +64,12 @@ func New(cfg Config) *Server {
 	r.Use(recoverer(cfg.Logger))
 	r.Use(securityHeaders())
 	r.Use(maxBodySize(2 << 20)) // 2MB max request body
+	if cfg.Auth != nil {
+		r.Use(basicAuthGuard(*cfg.Auth))
+		r.Use(csrfCookie(*cfg.Auth))
+		r.Use(csrfGuard(*cfg.Auth))
+	}
+	r.Use(sameOriginMutationGuard())
 	r.Use(readonlyGuard(cfg.Readonly))
 
 	// API routes.

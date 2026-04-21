@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -59,6 +60,8 @@ func run() error {
 		noOpenFlag   bool
 		envFlag      string
 		versionFlag  bool
+		httpUser     string
+		httpPassword string
 	)
 
 	fs.StringVar(&urlFlag, "url", "", "Override discovery with a literal Postgres URL")
@@ -75,6 +78,8 @@ func run() error {
 	fs.BoolVar(&noOpenFlag, "no-open", false, "Don't open the browser automatically")
 	fs.StringVar(&envFlag, "env", "", "Select a .dbseer.json environment by name")
 	fs.BoolVar(&versionFlag, "version", false, "Print version and exit")
+	fs.StringVar(&httpUser, "http-user", os.Getenv("DBSEER_HTTP_USER"), "HTTP basic auth username for non-local binds")
+	fs.StringVar(&httpPassword, "http-password", os.Getenv("DBSEER_HTTP_PASSWORD"), "HTTP basic auth password for non-local binds")
 
 	// -v as alias for --version.
 	fs.BoolVar(&versionFlag, "v", false, "Print version and exit (alias for --version)")
@@ -170,8 +175,21 @@ func run() error {
 	}
 
 	// 8. ValidateBind.
-	if err := safety.ValidateBind(hostFlag); err != nil {
+	authEnabled := httpUser != "" || httpPassword != ""
+	if authEnabled && (httpUser == "" || httpPassword == "") {
+		return fmt.Errorf("--http-user and --http-password must be set together")
+	}
+	if err := safety.ValidateBind(hostFlag, authEnabled); err != nil {
 		return err
+	}
+
+	var authCfg *server.AuthConfig
+	if authEnabled {
+		authCfg = &server.AuthConfig{
+			Username:  httpUser,
+			Password:  httpPassword,
+			CSRFToken: randomToken(32),
+		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -202,6 +220,7 @@ func run() error {
 		Source:   source,
 		AuditLog: auditLog,
 		Readonly: readonlyFlag,
+		Auth:     authCfg,
 		Version:  version,
 		Logger:   logger,
 	})
@@ -268,6 +287,14 @@ func openBrowser(url string) error {
 	}
 
 	return exec.Command(cmd, args...).Start()
+}
+
+func randomToken(n int) string {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%x", buf)
 }
 
 func main() {
