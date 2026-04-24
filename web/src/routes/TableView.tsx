@@ -148,7 +148,6 @@ export default function TableView() {
     queryKey: queryKeys.browse(schema, tableName, browseOpts),
     queryFn: () => api.browse(schema, tableName, browseOpts),
     enabled: !!tableName,
-    placeholderData: (previousData) => previousData,
   });
 
   useEffect(() => {
@@ -315,6 +314,20 @@ export default function TableView() {
     [buildRowWhere, deleteMutation]
   );
 
+  const handleDeleteRows = useCallback(
+    (rowIndexes: number[]) => {
+      const wheres = rowIndexes
+        .map((rowIndex) => buildRowWhere(rowIndex))
+        .filter((where): where is Record<string, WireCell> => where !== null);
+      if (wheres.length === 0) return;
+
+      for (const where of wheres) {
+        deleteMutation.mutate({ where });
+      }
+    },
+    [buildRowWhere, deleteMutation]
+  );
+
   const handleAddRow = useCallback(() => {
     setInsertOpen(true);
   }, []);
@@ -364,6 +377,10 @@ export default function TableView() {
         {browseQuery.error instanceof ApiError ? browseQuery.error.message : "Unknown error"}
       </div>
     );
+  }
+
+  if (browseQuery.isLoading) {
+    return <div className="p-6 text-sm text-muted-foreground">Loading rows...</div>;
   }
 
   const emptyBrowse = {
@@ -468,6 +485,7 @@ export default function TableView() {
 
       <div className="flex-1 overflow-hidden">
         <DataGrid
+          key={`${schema}.${tableName}`}
           table={tableSchema}
           data={browseData}
           loading={browseQuery.isFetching}
@@ -483,6 +501,7 @@ export default function TableView() {
           onPageChange={(p) => setUrlState({ limit: p.limit, offset: p.offset })}
           onEditCell={handleEditCell}
           onDeleteRow={handleDeleteRow}
+          onDeleteRows={handleDeleteRows}
           onAddRow={handleAddRow}
         />
       </div>

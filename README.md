@@ -6,6 +6,13 @@ Modeled on Prisma Studio — browse, filter, sort, and edit rows, with click-a-f
 
 > **Status:** v0.1 scaffold. Core flows are wired end-to-end but there are known gaps (see "Known limitations" below).
 
+## Row grid
+
+- Click a row to select it; shift-click another row to select the full visible range.
+- Cmd/Ctrl-click toggles individual rows in the current page selection.
+- Use **Delete selected** or press Delete/Backspace to delete selected rows on editable tables.
+- Double-click a cell to edit it. Arrow keys move the focused cell, and Cmd/Ctrl+C copies the focused cell value.
+
 ## Install
 
 ```sh

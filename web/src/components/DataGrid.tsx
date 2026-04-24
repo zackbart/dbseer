@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, Plus, ScanSearch, SlidersHorizontal } from "lucide-react";
+import { ArrowUpDown, Plus, ScanSearch, SlidersHorizontal, Trash2 } from "lucide-react";
 
 export interface DataGridProps {
   table: TableSchema;
@@ -49,6 +49,7 @@ export interface DataGridProps {
   onPageChange: (p: { limit: number; offset: number }) => void;
   onEditCell: (rowIndex: number, column: string, newValue: WireCell) => void;
   onDeleteRow: (rowIndex: number) => void;
+  onDeleteRows: (rowIndexes: number[]) => void;
   onAddRow: () => void;
 }
 
@@ -238,6 +239,7 @@ export default function DataGrid({
   onPageChange,
   onEditCell,
   onDeleteRow,
+  onDeleteRows,
   onAddRow,
 }: DataGridProps) {
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colName: string } | null>(
@@ -252,6 +254,8 @@ export default function DataGrid({
   const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colName: string } | null>(
     null
   );
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
     colSizingKey ? getJSON<ColumnSizingState>(colSizingKey, {}) : {}
   );
@@ -385,6 +389,18 @@ export default function DataGrid({
   const currentPage = Math.floor(page.offset / page.limit) + 1;
   const visibleRowCount = reactTable.getRowModel().rows.length;
   const systemCols = new Set(["__rownum__", "__actions__"]);
+  const selectedRowIndexes = useMemo(
+    () => Array.from(selectedRows).sort((a, b) => a - b),
+    [selectedRows]
+  );
+
+  useEffect(() => {
+    setSelectedRows((prev) => {
+      const next = new Set(Array.from(prev).filter((idx) => idx >= 0 && idx < data.rows.length));
+      return next.size === prev.size ? prev : next;
+    });
+    setSelectionAnchor((prev) => (prev !== null && prev >= data.rows.length ? null : prev));
+  }, [data.rows.length]);
 
   const removeSortColumn = useCallback(
     (col: string) => {
@@ -395,6 +411,43 @@ export default function DataGrid({
 
   const colNames = data.columns.map((c) => c.name);
   const rowCount = reactTable.getRowModel().rows.length;
+
+  const selectRow = useCallback(
+    (rowIndex: number, e: React.MouseEvent) => {
+      setSelectedRows((prev) => {
+        const next = new Set(prev);
+
+        if (e.shiftKey && selectionAnchor !== null) {
+          const start = Math.min(selectionAnchor, rowIndex);
+          const end = Math.max(selectionAnchor, rowIndex);
+          for (let idx = start; idx <= end; idx += 1) {
+            next.add(idx);
+          }
+          return next;
+        }
+
+        if (e.metaKey || e.ctrlKey) {
+          if (next.has(rowIndex)) {
+            next.delete(rowIndex);
+          } else {
+            next.add(rowIndex);
+          }
+          return next;
+        }
+
+        return new Set([rowIndex]);
+      });
+      setSelectionAnchor((prev) => (e.shiftKey && prev !== null ? prev : rowIndex));
+    },
+    [selectionAnchor]
+  );
+
+  const deleteSelectedRows = useCallback(() => {
+    if (selectedRowIndexes.length === 0) return;
+    onDeleteRows(selectedRowIndexes);
+    setSelectedRows(new Set());
+    setSelectionAnchor(null);
+  }, [onDeleteRows, selectedRowIndexes]);
 
   const handleGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -429,6 +482,16 @@ export default function DataGrid({
         return;
       }
 
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        table.editable &&
+        selectedRows.size > 0
+      ) {
+        deleteSelectedRows();
+        e.preventDefault();
+        return;
+      }
+
       // Arrow navigation
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
@@ -445,7 +508,15 @@ export default function DataGrid({
         });
       }
     },
-    [focusedCell, colNames, rowCount, data.rows, table.editable]
+    [
+      focusedCell,
+      colNames,
+      rowCount,
+      data.rows,
+      table.editable,
+      selectedRows.size,
+      deleteSelectedRows,
+    ]
   );
 
   const handleHeaderClick = useCallback(
@@ -510,11 +581,37 @@ export default function DataGrid({
               {sorts.length} sort{sorts.length === 1 ? "" : "s"}
             </Badge>
             <span className="text-[11px] text-muted-foreground">
-              Enter edits, arrow keys move, Cmd/Ctrl+C copies.
+              Shift-click selects rows, Delete removes selected rows.
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {table.editable && selectedRows.size > 0 && (
+              <>
+                <span className="text-[11px] text-muted-foreground">
+                  {selectedRows.size.toLocaleString()} selected
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedRows(new Set());
+                    setSelectionAnchor(null);
+                  }}
+                >
+                  Clear selection
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={deleteSelectedRows}
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete selected
+                </Button>
+              </>
+            )}
             {filters.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => onFiltersChange([])}>
                 Clear filters
@@ -630,45 +727,57 @@ export default function DataGrid({
                 </td>
               </tr>
             ) : (
-              reactTable.getRowModel().rows.map((row) => (
-                <tr key={row.id} className="group border-b border-border/80 hover:bg-muted/35">
-                  {row.getVisibleCells().map((cell) => {
-                    const isFocused =
-                      focusedCell?.rowIndex === row.index &&
-                      focusedCell?.colName === cell.column.id;
-                    const isActionsCol = cell.column.id === "__actions__";
-                    const isRowNumCol = cell.column.id === "__rownum__";
-                    return (
-                      <td
-                        key={cell.id}
-                        className={cn(
-                          "overflow-hidden px-2 py-1.5 align-top",
-                          isRowNumCol && "bg-muted/30",
-                          isFocused && "ring-2 ring-ring ring-inset"
-                        )}
-                        style={{ width: cell.column.getSize() }}
-                        onClick={() => {
-                          if (!isActionsCol && !isRowNumCol) {
-                            setFocusedCell({ rowIndex: row.index, colName: cell.column.id });
-                          }
-                        }}
-                        onContextMenu={(e) => {
-                          if (!table.editable || isActionsCol || isRowNumCol) return;
-                          e.preventDefault();
-                          setContextMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            rowIndex: row.index,
-                            colName: cell.column.id,
-                          });
-                        }}
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))
+              reactTable.getRowModel().rows.map((row) => {
+                const isSelected = selectedRows.has(row.index);
+                return (
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      "group border-b border-border/80 hover:bg-muted/35",
+                      isSelected && "bg-primary/10 hover:bg-primary/15"
+                    )}
+                  >
+                    {row.getVisibleCells().map((cell) => {
+                      const isFocused =
+                        focusedCell?.rowIndex === row.index &&
+                        focusedCell?.colName === cell.column.id;
+                      const isActionsCol = cell.column.id === "__actions__";
+                      const isRowNumCol = cell.column.id === "__rownum__";
+                      return (
+                        <td
+                          key={cell.id}
+                          className={cn(
+                            "overflow-hidden px-2 py-1.5 align-top",
+                            isRowNumCol && "bg-muted/30",
+                            isFocused && "ring-2 ring-ring ring-inset"
+                          )}
+                          style={{ width: cell.column.getSize() }}
+                          onClick={(e) => {
+                            if (table.editable) {
+                              selectRow(row.index, e);
+                            }
+                            if (!isActionsCol && !isRowNumCol) {
+                              setFocusedCell({ rowIndex: row.index, colName: cell.column.id });
+                            }
+                          }}
+                          onContextMenu={(e) => {
+                            if (!table.editable || isActionsCol || isRowNumCol) return;
+                            e.preventDefault();
+                            setContextMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              rowIndex: row.index,
+                              colName: cell.column.id,
+                            });
+                          }}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
