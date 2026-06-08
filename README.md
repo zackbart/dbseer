@@ -121,8 +121,8 @@ Filters combine with `AND`. `OR` and JSON path filters are v0.2.
 
 ## Architecture
 
-- **Backend:** Go 1.22+, [pgx v5](https://github.com/jackc/pgx), [chi v5](https://github.com/go-chi/chi), stdlib `log/slog`. Single binary with the frontend embedded via `//go:embed all:dist`.
-- **Frontend:** React 18, TypeScript strict, [TanStack Query v5](https://tanstack.com/query), [TanStack Table v8](https://tanstack.com/table), [React Router v6](https://reactrouter.com), Tailwind v3. Filter/sort/page state lives in the URL — back/forward and deep-linking Just Work.
+- **Backend:** Go 1.25+, [pgx v5](https://github.com/jackc/pgx), [chi v5](https://github.com/go-chi/chi), stdlib `log/slog`. Single binary with the frontend embedded via `//go:embed all:dist`.
+- **Frontend:** React 18, TypeScript strict, [TanStack Query v5](https://tanstack.com/query), [TanStack Table v8](https://tanstack.com/table), [React Router v6](https://reactrouter.com), Tailwind v4 + shadcn/ui (Base UI primitives). Filter/sort/page state lives in the URL — back/forward and deep-linking Just Work.
 - **Dev loop:** `make dev` runs `air` (Go hot-reload) and `vite` (HMR) in parallel. Go on `:4983`, Vite on `:5173`; Go (when built with `-tags dev`) reverse-proxies non-`/api/*` requests to Vite. You visit `http://localhost:4983` only.
 - **Distribution:** `goreleaser` builds binaries for `darwin/linux × amd64/arm64` on each `v*` tag and publishes them to GitHub Releases. The Homebrew formula in `zackbart/homebrew-tap` is auto-updated via goreleaser's `brews:` section.
 

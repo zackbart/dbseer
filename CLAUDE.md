@@ -4,8 +4,8 @@ Lightweight, browser-based Postgres GUI for development environments. Single sta
 
 ## Architecture
 
-- **Backend:** Go 1.22+, pgx v5, chi v5, stdlib slog
-- **Frontend:** React 18, TypeScript (strict), Vite 5, Tailwind CSS v4, shadcn/ui (Base UI)
+- **Backend:** Go 1.25+, pgx v5, chi v5, stdlib slog
+- **Frontend:** React 18, TypeScript (strict), Vite 5, Tailwind CSS v4, shadcn/ui (Base UI primitives via `@base-ui/react`)
 - **State:** TanStack Query v5 (server), TanStack Table v8 (grid), React Router v6 (routing), URL params (filters/sorts/pagination)
 
 ## Development
