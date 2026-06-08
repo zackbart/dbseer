@@ -44,6 +44,40 @@ type DeleteRequest struct {
 	Confirm int64
 }
 
+// MutationAudit describes the SQL and bound parameters for a successful
+// mutation. It is used by the server-side history log.
+type MutationAudit struct {
+	SQL    string
+	Params []any
+}
+
+// DescribeInsert returns the SQL and bound parameters that Insert will execute.
+func DescribeInsert(req InsertRequest, tableMeta Table) (MutationAudit, error) {
+	sql, args, err := buildInsertSQL(req, tableMeta)
+	if err != nil {
+		return MutationAudit{}, err
+	}
+	return MutationAudit{SQL: sql, Params: args}, nil
+}
+
+// DescribeUpdate returns the SQL and bound parameters that Update will execute.
+func DescribeUpdate(req UpdateRequest, tableMeta Table) (MutationAudit, error) {
+	sql, args, err := buildUpdateSQL(req, tableMeta)
+	if err != nil {
+		return MutationAudit{}, err
+	}
+	return MutationAudit{SQL: sql, Params: args}, nil
+}
+
+// DescribeDelete returns the SQL and bound parameters that Delete will execute.
+func DescribeDelete(req DeleteRequest, tableMeta Table) (MutationAudit, error) {
+	sql, args, err := buildDeleteSQL(req, tableMeta)
+	if err != nil {
+		return MutationAudit{}, err
+	}
+	return MutationAudit{SQL: sql, Params: args}, nil
+}
+
 // Insert inserts a new row and returns the inserted row as wire cells.
 // Returns ErrReadonly if the pool is read-only, ErrTableReadonly if not editable.
 func Insert(ctx context.Context, pool *Pool, tableMeta Table, req InsertRequest) ([]wire.Cell, error) {

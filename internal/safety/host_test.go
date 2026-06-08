@@ -5,7 +5,7 @@ import (
 )
 
 func TestParse_URLForm(t *testing.T) {
-	info, err := Parse("postgres://user:pass@host.example.com:5432/mydb")
+	info, err := Parse("postgres://user:pass@host.example.com:5432/mydb?sslmode=require")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,13 +21,16 @@ func TestParse_URLForm(t *testing.T) {
 	if info.User != "user" {
 		t.Errorf("User = %q, want %q", info.User, "user")
 	}
+	if info.SSLMode != "require" {
+		t.Errorf("SSLMode = %q, want %q", info.SSLMode, "require")
+	}
 	if info.IsLocalhost {
 		t.Error("IsLocalhost should be false for remote host")
 	}
 }
 
 func TestParse_KeywordForm(t *testing.T) {
-	info, err := Parse("host=localhost port=5432 dbname=app user=pguser")
+	info, err := Parse("host=localhost port=5432 dbname=app user=pguser sslmode=disable")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,8 +46,28 @@ func TestParse_KeywordForm(t *testing.T) {
 	if info.User != "pguser" {
 		t.Errorf("User = %q, want %q", info.User, "pguser")
 	}
+	if info.SSLMode != "disable" {
+		t.Errorf("SSLMode = %q, want %q", info.SSLMode, "disable")
+	}
 	if !info.IsLocalhost {
 		t.Error("IsLocalhost should be true for localhost")
+	}
+}
+
+func TestRemoteTLSWarning(t *testing.T) {
+	remoteUnsafe := URLInfo{Host: "db.example.com", SSLMode: "disable", IsLocalhost: false}
+	if RemoteTLSWarning(remoteUnsafe) == "" {
+		t.Fatal("expected warning for remote sslmode=disable")
+	}
+
+	remoteSafe := URLInfo{Host: "db.example.com", SSLMode: "require", IsLocalhost: false}
+	if RemoteTLSWarning(remoteSafe) != "" {
+		t.Fatal("expected no warning for remote sslmode=require")
+	}
+
+	localUnsafe := URLInfo{Host: "localhost", SSLMode: "disable", IsLocalhost: true}
+	if RemoteTLSWarning(localUnsafe) != "" {
+		t.Fatal("expected no warning for localhost")
 	}
 }
 
@@ -64,7 +87,7 @@ func TestIsLocalhost(t *testing.T) {
 		{"127.0.0.1", true},
 		{"::1", true},
 		{"0.0.0.0", true},
-		{"", true},          // unix socket
+		{"", true}, // unix socket
 		{"myhost.local", true},
 		{"db.local", true},
 		{"192.168.1.1", false},

@@ -23,6 +23,8 @@ type URLInfo struct {
 	Database string
 	// User is the Postgres username.
 	User string
+	// SSLMode is the sslmode value supplied in the DSN, if any.
+	SSLMode string
 	// IsLocalhost is true when the host resolves to a local loopback address or
 	// unix socket. Applies to: "" (unix socket), "localhost", "127.0.0.1",
 	// "::1", "0.0.0.0", and any host ending in ".local".
@@ -47,9 +49,25 @@ func Parse(dsn string) (URLInfo, error) {
 		Port:        port,
 		Database:    cfg.Database,
 		User:        cfg.User,
+		SSLMode:     extractSSLMode(dsn),
 		IsLocalhost: isLocalhost(host),
 	}
 	return info, nil
+}
+
+// RemoteTLSWarning returns a warning message when a remote DSN explicitly opts
+// into an unsafe TLS mode. It is intentionally advisory: some development
+// proxies terminate TLS outside Postgres, so dbseer logs rather than blocks.
+func RemoteTLSWarning(info URLInfo) string {
+	if info.IsLocalhost {
+		return ""
+	}
+	switch strings.ToLower(info.SSLMode) {
+	case "disable", "allow":
+		return "remote Postgres sslmode is not enforcing TLS; prefer sslmode=require or verify-full"
+	default:
+		return ""
+	}
 }
 
 // isLocalhost returns true for hosts that are local loopback addresses or
@@ -63,6 +81,25 @@ func isLocalhost(host string) bool {
 		return true
 	}
 	return false
+}
+
+func extractSSLMode(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return ""
+		}
+		return u.Query().Get("sslmode")
+	}
+
+	for _, part := range strings.Fields(dsn) {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok || strings.ToLower(key) != "sslmode" {
+			continue
+		}
+		return strings.Trim(val, `'"`)
+	}
+	return ""
 }
 
 // Redact returns a safe string representation of the DSN suitable for logging.

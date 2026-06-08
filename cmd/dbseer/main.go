@@ -46,22 +46,26 @@ func run() error {
 	}
 
 	var (
-		urlFlag      string
-		hostFlag     string
-		portFlag     int
-		allowRemote  bool
-		allowProd    bool
-		readonlyFlag bool
-		debugFlag    bool
-		quietFlag    bool
-		whichFlag    bool
-		dryRunFlag   bool
-		devFlag      bool
-		noOpenFlag   bool
-		envFlag      string
-		versionFlag  bool
-		httpUser     string
-		httpPassword string
+		urlFlag          string
+		hostFlag         string
+		portFlag         int
+		allowRemote      bool
+		allowProd        bool
+		readonlyFlag     bool
+		debugFlag        bool
+		quietFlag        bool
+		whichFlag        bool
+		dryRunFlag       bool
+		devFlag          bool
+		noOpenFlag       bool
+		envFlag          string
+		versionFlag      bool
+		httpUser         string
+		httpPassword     string
+		statementTimeout time.Duration
+		lockTimeout      time.Duration
+		idleTxTimeout    time.Duration
+		applicationName  string
 	)
 
 	fs.StringVar(&urlFlag, "url", "", "Override discovery with a literal Postgres URL")
@@ -80,6 +84,10 @@ func run() error {
 	fs.BoolVar(&versionFlag, "version", false, "Print version and exit")
 	fs.StringVar(&httpUser, "http-user", os.Getenv("DBSEER_HTTP_USER"), "HTTP basic auth username for non-local binds")
 	fs.StringVar(&httpPassword, "http-password", os.Getenv("DBSEER_HTTP_PASSWORD"), "HTTP basic auth password for non-local binds")
+	fs.DurationVar(&statementTimeout, "statement-timeout", 30*time.Second, "Postgres statement_timeout for dbseer sessions (0 disables)")
+	fs.DurationVar(&lockTimeout, "lock-timeout", 5*time.Second, "Postgres lock_timeout for dbseer sessions (0 disables)")
+	fs.DurationVar(&idleTxTimeout, "idle-in-tx-timeout", 30*time.Second, "Postgres idle_in_transaction_session_timeout for dbseer sessions (0 disables)")
+	fs.StringVar(&applicationName, "application-name", "dbseer", "Postgres application_name for dbseer sessions")
 
 	// -v as alias for --version.
 	fs.BoolVar(&versionFlag, "v", false, "Print version and exit (alias for --version)")
@@ -173,6 +181,9 @@ func run() error {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+	if warning := safety.RemoteTLSWarning(info); warning != "" {
+		logger.Warn(warning)
+	}
 
 	// 8. ValidateBind.
 	authEnabled := httpUser != "" || httpPassword != ""
@@ -196,7 +207,13 @@ func run() error {
 	defer cancel()
 
 	// 9. NewPool.
-	pool, err := db.NewPool(ctx, source.URL, readonlyFlag)
+	pool, err := db.NewPoolWithOptions(ctx, source.URL, db.PoolOptions{
+		Readonly:         readonlyFlag,
+		ApplicationName:  applicationName,
+		StatementTimeout: statementTimeout,
+		LockTimeout:      lockTimeout,
+		IdleInTxTimeout:  idleTxTimeout,
+	})
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}

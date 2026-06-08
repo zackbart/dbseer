@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,9 +18,25 @@ type Pool struct {
 	readonly bool
 }
 
+// PoolOptions controls dbseer-specific session defaults applied to every
+// Postgres connection in the pool.
+type PoolOptions struct {
+	Readonly         bool
+	ApplicationName  string
+	StatementTimeout time.Duration
+	LockTimeout      time.Duration
+	IdleInTxTimeout  time.Duration
+}
+
 // NewPool creates a new connection pool for the given DSN.
 // If readonly is true, every connection starts with default_transaction_read_only=on.
 func NewPool(ctx context.Context, dsn string, readonly bool) (*Pool, error) {
+	return NewPoolWithOptions(ctx, dsn, PoolOptions{Readonly: readonly})
+}
+
+// NewPoolWithOptions creates a new connection pool for the given DSN and
+// applies dbseer's session-level guardrails.
+func NewPoolWithOptions(ctx context.Context, dsn string, opts PoolOptions) (*Pool, error) {
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
@@ -38,10 +55,17 @@ func NewPool(ctx context.Context, dsn string, readonly bool) (*Pool, error) {
 		}
 	}
 
-	if readonly {
+	if opts.Readonly {
 		// Belt and braces: every new connection starts with default_transaction_read_only=on.
 		config.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	}
+	if opts.ApplicationName == "" {
+		opts.ApplicationName = "dbseer"
+	}
+	setRuntimeParamIfMissing(config.ConnConfig.RuntimeParams, "application_name", opts.ApplicationName)
+	setDurationRuntimeParam(config.ConnConfig.RuntimeParams, "statement_timeout", opts.StatementTimeout)
+	setDurationRuntimeParam(config.ConnConfig.RuntimeParams, "lock_timeout", opts.LockTimeout)
+	setDurationRuntimeParam(config.ConnConfig.RuntimeParams, "idle_in_transaction_session_timeout", opts.IdleInTxTimeout)
 
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		return registerUserTypes(ctx, conn)
@@ -55,7 +79,23 @@ func NewPool(ctx context.Context, dsn string, readonly bool) (*Pool, error) {
 		p.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Pool{Pool: p, readonly: readonly}, nil
+	return &Pool{Pool: p, readonly: opts.Readonly}, nil
+}
+
+func setRuntimeParamIfMissing(params map[string]string, key, value string) {
+	if value == "" {
+		return
+	}
+	if _, ok := params[key]; !ok {
+		params[key] = value
+	}
+}
+
+func setDurationRuntimeParam(params map[string]string, key string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	setRuntimeParamIfMissing(params, key, fmt.Sprintf("%dms", d.Milliseconds()))
 }
 
 // Readonly returns true if this pool was opened in read-only mode.

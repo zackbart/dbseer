@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, Plus, ScanSearch, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowUpDown, Plus, RotateCcw, Save, ScanSearch, SlidersHorizontal, Trash2 } from "lucide-react";
 
 export interface DataGridProps {
   table: TableSchema;
@@ -51,6 +51,9 @@ export interface DataGridProps {
   onDeleteRow: (rowIndex: number) => void;
   onDeleteRows: (rowIndexes: number[]) => void;
   onAddRow: () => void;
+  onSaveView: () => void;
+  onLoadSavedView: () => void;
+  hasSavedView: boolean;
 }
 
 function formatCellDisplay(cell: WireCell): string {
@@ -241,6 +244,9 @@ export default function DataGrid({
   onDeleteRow,
   onDeleteRows,
   onAddRow,
+  onSaveView,
+  onLoadSavedView,
+  hasSavedView,
 }: DataGridProps) {
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colName: string } | null>(
     null
@@ -387,6 +393,9 @@ export default function DataGrid({
 
   const totalPages = Math.max(1, Math.ceil(data.page.total / page.limit));
   const currentPage = Math.floor(page.offset / page.limit) + 1;
+  const hasMore = data.page.has_more ?? currentPage < totalPages;
+  const nextDisabled = !hasMore && currentPage >= totalPages;
+  const lastDisabled = data.page.is_estimated || currentPage >= totalPages;
   const visibleRowCount = reactTable.getRowModel().rows.length;
   const systemCols = new Set(["__rownum__", "__actions__"]);
   const selectedRowIndexes = useMemo(
@@ -622,6 +631,16 @@ export default function DataGrid({
                 Reset sort
               </Button>
             )}
+            <Button size="sm" variant="outline" onClick={onSaveView} className="gap-1.5">
+              <Save className="size-3.5" />
+              Save view
+            </Button>
+            {hasSavedView && (
+              <Button size="sm" variant="outline" onClick={onLoadSavedView} className="gap-1.5">
+                <RotateCcw className="size-3.5" />
+                Load view
+              </Button>
+            )}
             {table.editable && (
               <Button size="sm" onClick={onAddRow} className="gap-1.5">
                 <Plus className="size-3.5" />
@@ -821,7 +840,7 @@ export default function DataGrid({
             </span>
             <button
               onClick={() => onPageChange({ limit: page.limit, offset: page.offset + page.limit })}
-              disabled={currentPage >= totalPages}
+              disabled={nextDisabled}
               className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
             >
               Next
@@ -830,7 +849,7 @@ export default function DataGrid({
               onClick={() =>
                 onPageChange({ limit: page.limit, offset: (totalPages - 1) * page.limit })
               }
-              disabled={currentPage >= totalPages}
+              disabled={lastDisabled}
               className="rounded border border-border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
               title="Last page"
             >
@@ -865,7 +884,7 @@ export default function DataGrid({
                   : undefined
               }
             >
-              {data.page.is_estimated ? "~" : ""}
+              {data.page.is_estimated ? "at least " : ""}
               {data.page.total.toLocaleString()} total rows
             </span>
           </span>

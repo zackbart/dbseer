@@ -103,6 +103,25 @@ func TestBuildInsertSQL_Basic(t *testing.T) {
 	}
 }
 
+func TestDescribeUpdate(t *testing.T) {
+	req := UpdateRequest{
+		Schema: "public",
+		Table:  "users",
+		Where:  map[string]wire.Cell{"id": intCell(42)},
+		Values: map[string]wire.Cell{"email": textCell("new@example.com")},
+	}
+	audit, err := DescribeUpdate(req, mutateTestTable())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(audit.SQL, "UPDATE") {
+		t.Fatalf("expected UPDATE SQL, got %s", audit.SQL)
+	}
+	if len(audit.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d: %#v", len(audit.Params), audit.Params)
+	}
+}
+
 func TestBuildInsertSQL_DefaultValues(t *testing.T) {
 	req := InsertRequest{
 		Schema: "public",

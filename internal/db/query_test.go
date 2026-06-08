@@ -12,6 +12,7 @@ func testCols() []Column {
 		{Name: "email", Ordinal: 2, TypeName: "text", Editor: "text", Nullable: true},
 		{Name: "created_at", Ordinal: 3, TypeName: "timestamptz", Editor: "timestamptz", Nullable: true},
 		{Name: "role", Ordinal: 4, TypeName: "user_role", Editor: "enum", Nullable: true, EnumName: strPtr("user_role")},
+		{Name: "external_id", Ordinal: 5, TypeName: "uuid", Editor: "uuid", Nullable: true},
 	}
 }
 
@@ -165,6 +166,27 @@ func TestBuildSQL_TiebreakerNotDuplicated(t *testing.T) {
 	}
 }
 
+func TestBuildSQL_TiebreakerFromUniqueConstraint(t *testing.T) {
+	tbl := testTable()
+	tbl.PrimaryKey = nil
+	tbl.UniqueConstraints = [][]string{{"email"}}
+	req := BrowseRequest{
+		Schema: "public",
+		Table:  "users",
+		Limit:  50,
+		Sorts: []Sort{
+			{Column: "created_at", Desc: true},
+		},
+	}
+	sql, _, err := buildSQLWithMeta(req, tbl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(sql, `"email" ASC`) {
+		t.Errorf("SQL missing unique constraint tiebreaker: %s", sql)
+	}
+}
+
 func TestBuildSQL_InOperator(t *testing.T) {
 	req := BrowseRequest{
 		Schema: "public",
@@ -272,6 +294,21 @@ func TestBuildSQL_UnknownColumn(t *testing.T) {
 	}
 }
 
+func TestBuildSQL_UnknownSortColumn(t *testing.T) {
+	req := BrowseRequest{
+		Schema: "public",
+		Table:  "users",
+		Limit:  50,
+		Sorts: []Sort{
+			{Column: "nonexistent", Desc: true},
+		},
+	}
+	_, _, err := buildSQLWithMeta(req, testTable())
+	if err == nil {
+		t.Fatal("expected error for unknown sort column, got nil")
+	}
+}
+
 func TestBuildSQL_UnknownOperator(t *testing.T) {
 	req := BrowseRequest{
 		Schema: "public",
@@ -284,6 +321,34 @@ func TestBuildSQL_UnknownOperator(t *testing.T) {
 	_, _, err := req.buildSQL(testCols())
 	if err == nil {
 		t.Fatal("expected error for unknown operator, got nil")
+	}
+}
+
+func TestBuildSQL_UnsupportedOperatorForUUID(t *testing.T) {
+	req := BrowseRequest{
+		Schema: "public",
+		Table:  "users",
+		Limit:  50,
+		Filters: []Filter{
+			{Column: "external_id", Op: OpContains, Value: "abc"},
+		},
+	}
+	_, _, err := buildSQLWithMeta(req, testTable())
+	if err == nil {
+		t.Fatal("expected unsupported uuid operator error, got nil")
+	}
+}
+
+func TestShouldSkipExactFilteredCount(t *testing.T) {
+	tbl := testTable()
+	tbl.EstimatedRows = EstimateThreshold
+	req := BrowseRequest{Filters: []Filter{{Column: "email", Op: OpContains, Value: "example"}}}
+	if !shouldSkipExactFilteredCount(tbl, req) {
+		t.Fatal("expected filtered large table to skip exact count")
+	}
+	req.Filters = nil
+	if shouldSkipExactFilteredCount(tbl, req) {
+		t.Fatal("expected unfiltered table not to use filtered count skip path")
 	}
 }
 

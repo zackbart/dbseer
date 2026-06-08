@@ -10,8 +10,9 @@ interface FilterBarProps {
 function operatorsForType(type: TypeHint): FilterOp[] {
   switch (type) {
     case "text":
-    case "uuid":
       return ["contains", "equals", "starts_with", "ends_with", "is_null", "is_not_null"];
+    case "uuid":
+      return ["eq", "is_null", "is_not_null"];
     case "int":
     case "float":
     case "numeric":

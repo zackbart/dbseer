@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useCallback, useEffect } from "react";
 import { api, queryKeys, ApiError } from "../lib/api";
 import { decodeBrowseParams, encodeBrowseParams } from "../lib/url";
+import { getJSON, setJSON } from "../lib/storage";
 import type { BrowseResponse, Filter, Sort, Table, WireCell } from "../lib/types";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,12 @@ interface UnscopedState {
   count: number;
   sql?: string;
   action: () => Promise<void>;
+}
+
+interface SavedTableView {
+  filters: Filter[];
+  sorts: Sort[];
+  limit: number;
 }
 
 function cellKey(rowIndex: number, column: string) {
@@ -132,6 +139,12 @@ export default function TableView() {
   const colSizingKey = discoverQuery.data
     ? `dbseer:colWidths:${discoverQuery.data.host}:${discoverQuery.data.port}:${discoverQuery.data.database}:${schema}.${tableName}`
     : undefined;
+  const savedViewKey = discoverQuery.data
+    ? `dbseer:savedView:${discoverQuery.data.host}:${discoverQuery.data.port}:${discoverQuery.data.database}:${schema}.${tableName}`
+    : undefined;
+  const [savedViewVersion, setSavedViewVersion] = useState(0);
+  const hasSavedView =
+    !!savedViewKey && !!getJSON<SavedTableView | null>(savedViewKey, null) && savedViewVersion >= 0;
 
   const schemaQuery = useQuery({
     queryKey: queryKeys.schema,
@@ -358,6 +371,25 @@ export default function TableView() {
     invalidateBrowse();
   }, [queryClient, invalidateBrowse]);
 
+  const handleSaveView = useCallback(() => {
+    if (!savedViewKey) return;
+    setJSON<SavedTableView>(savedViewKey, { filters, sorts, limit });
+    setSavedViewVersion((v) => v + 1);
+    toast.success("View saved");
+  }, [savedViewKey, filters, sorts, limit]);
+
+  const handleLoadSavedView = useCallback(() => {
+    if (!savedViewKey) return;
+    const saved = getJSON<SavedTableView | null>(savedViewKey, null);
+    if (!saved) return;
+    setUrlState({
+      filters: saved.filters,
+      sorts: saved.sorts,
+      limit: saved.limit,
+      offset: 0,
+    });
+  }, [savedViewKey, setUrlState]);
+
   if (schemaQuery.isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading schema...</div>;
   }
@@ -386,7 +418,7 @@ export default function TableView() {
   const emptyBrowse = {
     columns: [],
     rows: [],
-    page: { limit, offset, total: 0, is_estimated: false },
+    page: { limit, offset, total: 0, is_estimated: false, has_more: false },
     sort: [],
     filters: [],
   };
@@ -503,6 +535,9 @@ export default function TableView() {
           onDeleteRow={handleDeleteRow}
           onDeleteRows={handleDeleteRows}
           onAddRow={handleAddRow}
+          onSaveView={handleSaveView}
+          onLoadSavedView={handleLoadSavedView}
+          hasSavedView={hasSavedView}
         />
       </div>
 

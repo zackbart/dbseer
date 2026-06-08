@@ -68,6 +68,7 @@ type BrowseResponse struct {
 	Rows        [][]wire.Cell
 	Total       int64
 	IsEstimated bool // true when Total comes from pg_class.reltuples (no COUNT(*) was run)
+	HasMore     bool
 }
 
 // ResultColumn describes a column in the browse response.
@@ -95,7 +96,15 @@ type ResultColumn struct {
 // the limit) past the first page, the total is clamped down to
 // offset+len(rows). This self-corrects pagination when reltuples is stale.
 func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest) (*BrowseResponse, error) {
-	sql, args, err := req.buildSQL(tableMeta.Columns)
+	limit := normalizedLimit(req.Limit)
+
+	selectReq := req
+	skipExactFilteredCount := shouldSkipExactFilteredCount(tableMeta, req)
+	if skipExactFilteredCount {
+		selectReq.Limit = limit + 1
+	}
+
+	sql, args, err := buildSQLWithMeta(selectReq, tableMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -112,10 +121,6 @@ func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest)
 		// Self-clamp: a partial page proves we've hit the real end of the table.
 		// Clamp total down so the UI stops paginating into empty space when
 		// reltuples is stale (e.g. table was bulk-loaded then truncated).
-		limit := req.Limit
-		if limit <= 0 {
-			limit = 50
-		}
 		if int64(len(resultRows)) < int64(limit) {
 			actualEnd := int64(req.Offset) + int64(len(resultRows))
 			if actualEnd < total {
@@ -128,6 +133,33 @@ func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest)
 			Rows:        resultRows,
 			Total:       total,
 			IsEstimated: true,
+			HasMore:     int64(req.Offset+len(resultRows)) < total,
+		}, nil
+	}
+
+	if skipExactFilteredCount {
+		resultRows, colMeta, err := executeBrowseSelect(ctx, pool, sql, args, tableMeta)
+		if err != nil {
+			return nil, err
+		}
+		hasMore := len(resultRows) > limit
+		if hasMore {
+			resultRows = resultRows[:limit]
+		}
+
+		total := int64(req.Offset + len(resultRows))
+		if hasMore {
+			// This is not an exact total. It is just high enough for the UI to
+			// keep the next-page affordance enabled without blocking on COUNT(*).
+			total = int64(req.Offset + limit + 1)
+		}
+
+		return &BrowseResponse{
+			Columns:     colMeta,
+			Rows:        resultRows,
+			Total:       total,
+			IsEstimated: true,
+			HasMore:     hasMore,
 		}, nil
 	}
 
@@ -160,7 +192,19 @@ func Browse(ctx context.Context, pool *Pool, tableMeta Table, req BrowseRequest)
 		Rows:        resultRows,
 		Total:       total,
 		IsEstimated: false,
+		HasMore:     int64(req.Offset+len(resultRows)) < total,
 	}, nil
+}
+
+func normalizedLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
+}
+
+func shouldSkipExactFilteredCount(tableMeta Table, req BrowseRequest) bool {
+	return len(req.Filters) > 0 && tableMeta.EstimatedRows >= EstimateThreshold
 }
 
 // executeBrowseSelect runs the row-fetching SELECT and converts each row to
@@ -266,6 +310,25 @@ func browseCount(ctx context.Context, pool *Pool, cols []Column, req BrowseReque
 // buildSQL constructs the SELECT statement for a BrowseRequest.
 // It is exported as an unexported method so it can be unit-tested without a DB.
 func (req BrowseRequest) buildSQL(cols []Column) (string, []any, error) {
+	return buildBrowseSQL(req, cols, nil)
+}
+
+// buildSQLWithMeta constructs the SELECT statement using actual PK from tableMeta.
+func buildSQLWithMeta(req BrowseRequest, tableMeta Table) (string, []any, error) {
+	return buildBrowseSQL(req, tableMeta.Columns, stableKeyColumns(tableMeta))
+}
+
+func stableKeyColumns(tableMeta Table) []string {
+	if len(tableMeta.PrimaryKey) > 0 {
+		return tableMeta.PrimaryKey
+	}
+	if len(tableMeta.UniqueConstraints) > 0 {
+		return tableMeta.UniqueConstraints[0]
+	}
+	return nil
+}
+
+func buildBrowseSQL(req BrowseRequest, cols []Column, stableKeys []string) (string, []any, error) {
 	qtable, err := QualifiedTable(req.Schema, req.Table)
 	if err != nil {
 		return "", nil, err
@@ -297,9 +360,12 @@ func (req BrowseRequest) buildSQL(cols []Column) (string, []any, error) {
 	}
 
 	// ORDER BY.
-	var orderParts []string
 	sortedCols := map[string]bool{}
+	var orderParts []string
 	for _, s := range req.Sorts {
+		if _, ok := colMap[s.Column]; !ok {
+			return "", nil, fmt.Errorf("unknown sort column: %q", s.Column)
+		}
 		qcol, err := Quote(s.Column)
 		if err != nil {
 			return "", nil, err
@@ -311,79 +377,8 @@ func (req BrowseRequest) buildSQL(cols []Column) (string, []any, error) {
 		orderParts = append(orderParts, qcol+" "+dir)
 		sortedCols[s.Column] = true
 	}
-	// Note: tiebreaker is not appended in buildSQL (no tableMeta PK available).
-	// Use buildSQLWithMeta for PK tiebreaker support.
-
-	var sb strings.Builder
-	sb.WriteString("SELECT * FROM ")
-	sb.WriteString(qtable)
-	if len(whereParts) > 0 {
-		sb.WriteString(" WHERE ")
-		sb.WriteString(strings.Join(whereParts, " AND "))
-	}
-	if len(orderParts) > 0 {
-		sb.WriteString(" ORDER BY ")
-		sb.WriteString(strings.Join(orderParts, ", "))
-	}
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2))
-	args = append(args, limit, req.Offset)
-
-	return sb.String(), args, nil
-}
-
-// buildSQLWithMeta constructs the SELECT statement using actual PK from tableMeta.
-func buildSQLWithMeta(req BrowseRequest, tableMeta Table) (string, []any, error) {
-	qtable, err := QualifiedTable(req.Schema, req.Table)
-	if err != nil {
-		return "", nil, err
-	}
-
-	colMap := map[string]Column{}
-	for _, c := range tableMeta.Columns {
-		colMap[c.Name] = c
-	}
-
-	var args []any
-	var whereParts []string
-
-	for _, f := range req.Filters {
-		mc, ok := colMap[f.Column]
-		if !ok {
-			return "", nil, fmt.Errorf("unknown filter column: %q", f.Column)
-		}
-		qcol, err := Quote(f.Column)
-		if err != nil {
-			return "", nil, err
-		}
-		snippet, newArgs, err := buildFilterSnippet(qcol, f, mc, len(args)+1)
-		if err != nil {
-			return "", nil, err
-		}
-		whereParts = append(whereParts, snippet)
-		args = append(args, newArgs...)
-	}
-
-	// ORDER BY.
-	sortedCols := map[string]bool{}
-	var orderParts []string
-	for _, s := range req.Sorts {
-		qcol, err := Quote(s.Column)
-		if err != nil {
-			return "", nil, err
-		}
-		dir := "ASC"
-		if s.Desc {
-			dir = "DESC"
-		}
-		orderParts = append(orderParts, qcol+" "+dir)
-		sortedCols[s.Column] = true
-	}
-	// Stable tiebreaker: append PK columns not already in sort.
-	for _, pk := range tableMeta.PrimaryKey {
+	// Stable tiebreaker: append key columns not already in sort.
+	for _, pk := range stableKeys {
 		if !sortedCols[pk] {
 			qcol, err := Quote(pk)
 			if err != nil {
@@ -418,6 +413,10 @@ func buildSQLWithMeta(req BrowseRequest, tableMeta Table) (string, []any, error)
 // operation on a quoted column identifier. It returns the SQL snippet and any
 // new argument values. argN is the next $N index to use.
 func buildFilterSnippet(qcol string, f Filter, col Column, argN int) (string, []any, error) {
+	if !filterOpSupported(col.Editor, f.Op) {
+		return "", nil, fmt.Errorf("operator %q is not supported for column %q (%s)", f.Op, col.Name, col.Editor)
+	}
+
 	placeholder := fmt.Sprintf("$%d", argN)
 
 	switch f.Op {
@@ -506,6 +505,25 @@ func buildFilterSnippet(qcol string, f Filter, col Column, argN int) (string, []
 
 	default:
 		return "", nil, fmt.Errorf("unknown filter operator: %q", f.Op)
+	}
+}
+
+func filterOpSupported(editor string, op FilterOp) bool {
+	switch editor {
+	case string(wire.HintText):
+		return op == OpContains || op == OpEquals || op == OpStartsWith || op == OpEndsWith || op == OpIsNull || op == OpIsNotNull
+	case string(wire.HintUUID):
+		return op == OpEq || op == OpEquals || op == OpIsNull || op == OpIsNotNull
+	case string(wire.HintInt), string(wire.HintFloat), string(wire.HintNumeric), string(wire.HintMoney):
+		return op == OpEq || op == OpNe || op == OpLt || op == OpLte || op == OpGt || op == OpGte || op == OpIsNull || op == OpIsNotNull
+	case string(wire.HintDate), string(wire.HintTimestamp), string(wire.HintTimestamptz):
+		return op == OpEq || op == OpNe || op == OpLt || op == OpLte || op == OpGt || op == OpGte || op == OpIsNull || op == OpIsNotNull
+	case string(wire.HintBool):
+		return op == OpIsTrue || op == OpIsFalse || op == OpIsNull
+	case string(wire.HintEnum):
+		return op == OpIn || op == OpIsNull || op == OpIsNotNull
+	default:
+		return op == OpIsNull || op == OpIsNotNull
 	}
 }
 

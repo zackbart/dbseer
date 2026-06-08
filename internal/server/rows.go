@@ -37,6 +37,7 @@ type browsePageJSON struct {
 	Offset      int   `json:"offset"`
 	Total       int64 `json:"total"`
 	IsEstimated bool  `json:"is_estimated"`
+	HasMore     bool  `json:"has_more"`
 }
 
 type browseSortJSON struct {
@@ -120,7 +121,13 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, browseResponseJSON{
 		Columns: cols,
 		Rows:    rows,
-		Page:    browsePageJSON{Limit: limit, Offset: offset, Total: result.Total, IsEstimated: result.IsEstimated},
+		Page: browsePageJSON{
+			Limit:       limit,
+			Offset:      offset,
+			Total:       result.Total,
+			IsEstimated: result.IsEstimated,
+			HasMore:     result.HasMore,
+		},
 		Sort:    sortJSON,
 		Filters: filterJSON,
 	})
@@ -282,7 +289,8 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appendAuditLog(s.cfg.AuditLog, "INSERT", schema+"."+table, 1, req)
+	audit, _ := db.DescribeInsert(req, tableMeta)
+	appendAuditLog(s.cfg.AuditLog, "INSERT", schema+"."+table, 1, audit, s.auditDBInfo())
 
 	writeJSON(w, 201, row)
 }
@@ -364,7 +372,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appendAuditLog(s.cfg.AuditLog, "UPDATE", schema+"."+table, int64(len(rows)), req)
+	audit, _ := db.DescribeUpdate(req, tableMeta)
+	appendAuditLog(s.cfg.AuditLog, "UPDATE", schema+"."+table, int64(len(rows)), audit, s.auditDBInfo())
 
 	writeJSON(w, 200, rows)
 }
@@ -419,7 +428,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		Confirm: confirm,
 	}
 
-	_, err = db.Delete(r.Context(), s.cfg.Pool, tableMeta, req)
+	affected, err := db.Delete(r.Context(), s.cfg.Pool, tableMeta, req)
 	if err != nil {
 		var unscopedErr *db.UnscopedError
 		if errors.As(err, &unscopedErr) {
@@ -440,7 +449,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appendAuditLog(s.cfg.AuditLog, "DELETE", schema+"."+table, int64(len(body.Where)), req)
+	audit, _ := db.DescribeDelete(req, tableMeta)
+	appendAuditLog(s.cfg.AuditLog, "DELETE", schema+"."+table, affected, audit, s.auditDBInfo())
 
 	w.WriteHeader(204)
 }
@@ -472,7 +482,20 @@ func findTable(sc *db.Schema, schema, table string) (db.Table, bool) {
 }
 
 // appendAuditLog writes an entry to the audit log if it is non-nil.
-func appendAuditLog(logger *safety.Logger, op, table string, affected int64, req any) {
+type auditDBInfo struct {
+	user     string
+	database string
+}
+
+func (s *Server) auditDBInfo() auditDBInfo {
+	if s.cfg.Pool == nil {
+		return auditDBInfo{}
+	}
+	cc := s.cfg.Pool.Config().ConnConfig
+	return auditDBInfo{user: cc.User, database: cc.Database}
+}
+
+func appendAuditLog(logger *safety.Logger, op, table string, affected int64, audit db.MutationAudit, info auditDBInfo) {
 	if logger == nil {
 		return
 	}
@@ -481,6 +504,10 @@ func appendAuditLog(logger *safety.Logger, op, table string, affected int64, req
 		Op:       op,
 		Table:    table,
 		Affected: affected,
+		SQL:      audit.SQL,
+		Params:   audit.Params,
+		User:     info.user,
+		Database: info.database,
 	}
 	// Best-effort: ignore errors.
 	_ = logger.Append(e)

@@ -196,7 +196,7 @@ Filters combine with `AND`. `OR` and filter builders are v0.2.
   "rows": [
     [ {"v": "11111111-2222-3333-4444-555555555555", "t": "uuid"}, {"v": "alice@example.com", "t": "text"} ]
   ],
-  "page": { "limit": 50, "offset": 0, "total": 12345 },
+  "page": { "limit": 50, "offset": 0, "total": 12345, "is_estimated": false, "has_more": true },
   "sort": [ {"column": "created_at", "dir": "desc"} ],
   "filters": [ {"column": "email", "op": "contains", "val": "example.com"} ]
 }
@@ -311,11 +311,11 @@ Read the audit log (`.dbseer/history.jsonl`) with optional filters.
 
 When `dbseer` is built with `-tags dev` and run with `--dev`, the backend reverse-proxies every non-`/api/*` request to the Vite dev server on `http://localhost:5173`. The user visits `http://localhost:4983` regardless. In production builds, the same non-API paths are served from the embedded frontend filesystem at `internal/ui/dist`.
 
-All responses include security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`, and `Permissions-Policy` to disable browser features not needed by the app.
+All responses include security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Referrer-Policy: same-origin`, and `Permissions-Policy` to disable browser features not needed by the app.
 
 ## Notes for clients
 
 - **Idempotency:** POST/PATCH/DELETE are not idempotent in v0.1. Do not retry blindly.
-- **Pagination:** `total` is an exact `COUNT(*)`. Large-table estimation is v0.2.
+- **Pagination:** `total` is exact for normal browses, estimated for large unfiltered tables, and may be a lower-bound estimate for large filtered tables so the first page is not blocked on `COUNT(*)`. Use `page.has_more` for next-page affordances.
 - **Schema cache:** The frontend should cache `/api/schema` with `staleTime: 30s`. Invalidate after any successful mutation on any table in that schema.
 - **Transport:** HTTP only. No websocket, no SSE in v0.1.

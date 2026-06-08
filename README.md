@@ -66,6 +66,10 @@ dbseer --which
 | `--env <name>` | — | Pick a named environment from `.dbseer.json` |
 | `--http-user <name>` | env / off | HTTP basic-auth username for non-local binds |
 | `--http-password <value>` | env / off | HTTP basic-auth password for non-local binds |
+| `--statement-timeout <duration>` | `30s` | Set Postgres `statement_timeout` for dbseer sessions (`0` disables) |
+| `--lock-timeout <duration>` | `5s` | Set Postgres `lock_timeout` for dbseer sessions (`0` disables) |
+| `--idle-in-tx-timeout <duration>` | `30s` | Set Postgres `idle_in_transaction_session_timeout` (`0` disables) |
+| `--application-name <name>` | `dbseer` | Set Postgres `application_name` for dbseer sessions |
 | `--no-open` | off | Don't open a browser automatically |
 | `--debug` / `--quiet` | — | slog level override (default Info) |
 | `--version` / `-v` | — | Print version and exit |
@@ -100,6 +104,8 @@ The server includes several security measures:
 - **HTTP security headers:** `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy`, `Cross-Origin-Opener-Policy`, `Referrer-Policy`, `Permissions-Policy`
 - **Same-origin write protection:** `POST`/`PATCH`/`DELETE` row mutations reject cross-site browser requests by validating `Origin` / `Referer` / `Sec-Fetch-Site`
 - **Authenticated remote access:** when binding to a non-local address, dbseer requires HTTP basic auth and a CSRF token on every state-changing request
+- **Remote session guardrails:** dbseer sets `application_name`, `statement_timeout`, `lock_timeout`, and `idle_in_transaction_session_timeout` on its Postgres sessions by default
+- **Remote TLS warning:** remote DSNs with `sslmode=disable` or `sslmode=allow` emit a warning; prefer `sslmode=require` or `sslmode=verify-full`
 - **Request timeouts:** Read timeout 10s, write timeout 30s, idle timeout 120s
 - **Request body limit:** Max 2MB per request
 - **Strict JSON decoding:** mutation endpoints require `Content-Type: application/json`, reject unknown fields, and reject multiple JSON payloads in one body
